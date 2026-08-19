@@ -1609,8 +1609,8 @@ dri2_flush_drawable_for_swapbuffers_flags(
    struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
    struct dri_drawable *dri_drawable = dri2_dpy->vtbl->get_dri_drawable(draw);
 
-   /* flush not available for swrast */
-   if (dri2_dpy->swrast_not_kms)
+   /* flush not available for swrast (but a swrast-hosted GPU still needs it) */
+   if (dri2_dpy->swrast_not_kms && !dri2_dpy->swrast_dmabuf)
       return;
 
    /* We know there's a current context because:
@@ -1735,7 +1735,7 @@ dri2_wait_client(_EGLDisplay *disp, _EGLContext *ctx)
    /* FIXME: If EGL allows frontbuffer rendering for window surfaces,
     * we need to copy fake to real here.*/
 
-   if (!dri2_dpy->swrast_not_kms)
+   if (!dri2_dpy->swrast_not_kms || dri2_dpy->swrast_dmabuf)
       dri_flush_drawable(dri_drawable);
 
    return EGL_TRUE;
