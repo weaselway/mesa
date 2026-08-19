@@ -188,6 +188,8 @@ dri_query_renderer_integer(struct dri_screen *_screen, int param,
 PUBLIC void
 dri_flush_drawable(struct dri_drawable *dPriv);
 PUBLIC void
+dri_finish_drawable(struct dri_drawable *dPriv);
+PUBLIC void
 dri_flush(struct dri_context *cPriv,
           struct dri_drawable *dPriv,
           unsigned flags,
