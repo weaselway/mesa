@@ -197,6 +197,9 @@ drisw_flush_frontbuffer(struct dri_context *ctx,
                         struct dri_drawable *drawable,
                         enum st_attachment_type statt);
 void
+dri_finish_drawable(struct dri_drawable *dPriv);
+
+void
 drisw_update_tex_buffer(struct dri_drawable *drawable,
                         struct dri_context *ctx,
                         struct pipe_resource *res);
