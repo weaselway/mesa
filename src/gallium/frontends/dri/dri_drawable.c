@@ -187,7 +187,16 @@ dri_create_drawable(struct dri_screen *screen, const struct dri_config *config,
       dri2_init_drawable(drawable, isPixmap, visual->alphaBits);
       break;
    case DRI_SCREEN_SWRAST:
-      drisw_init_drawable(drawable, isPixmap, visual->alphaBits);
+      /* A swrast screen normally presents by handing pixels back to the loader
+       * through putImage. A loader that supplies an image loader as well is
+       * telling us it can take buffers from the driver directly: that happens
+       * when the GPU is not reachable through a DRM node (WSL/d3d12, which is
+       * loaded as a swrast target via dxcore) but the driver can still export
+       * them. Honour that and allocate from the driver instead of shm. */
+      if (screen->image.loader)
+         dri2_init_drawable(drawable, isPixmap, visual->alphaBits);
+      else
+         drisw_init_drawable(drawable, isPixmap, visual->alphaBits);
       break;
    case DRI_SCREEN_KOPPER:
       kopper_init_drawable(drawable, isPixmap, visual->alphaBits);
@@ -576,6 +585,37 @@ dri_flush_drawable(struct dri_drawable *dPriv)
 
    if (ctx)
       dri_flush(ctx, dPriv, __DRI2_FLUSH_DRAWABLE, -1);
+}
+
+/**
+ * Wait until the GPU has finished everything submitted so far.
+ *
+ * A dma-buf normally carries its own fences, so handing one to a compositor
+ * right after submitting the frame is safe: the importer's own rendering waits
+ * on them. That is not true when the "dma-buf" is really a D3D12 shared handle
+ * (see d3d12_resource_get_handle) -- it has no fence attached, the compositor
+ * runs on a separate device and queue, and it will happily sample a frame that
+ * is still being drawn. Waiting here is what keeps that from tearing.
+ */
+void
+dri_finish_drawable(struct dri_drawable *dPriv)
+{
+   struct dri_context *ctx = dri_get_current();
+   struct pipe_screen *screen;
+   struct pipe_fence_handle *fence = NULL;
+
+   if (!ctx)
+      return;
+
+   screen = ctx->screen->base.screen;
+
+   /* The frame itself has already been submitted by dri_flush(); this picks up
+    * a fence for everything outstanding and blocks on it. */
+   st_context_flush(ctx->st, ST_FLUSH_END_OF_FRAME, &fence, NULL, NULL);
+   if (fence) {
+      screen->fence_finish(screen, NULL, fence, OS_TIMEOUT_INFINITE);
+      screen->fence_reference(screen, &fence, NULL);
+   }
 }
 
 /**

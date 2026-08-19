@@ -608,7 +608,10 @@ drisw_init_screen(struct dri_screen *screen, bool driver_name_is_inferred)
 
    screen->swrast_no_present = debug_get_option_swrast_no_present();
 
-   if (loader->base.version >= 4) {
+   /* The loader may omit the swrast extension entirely when it drives an
+    * image-loader drawable instead (see dri_create_drawable). Nothing will
+    * present through drisw_lf in that case, so the funcs are never called. */
+   if (loader && loader->base.version >= 4) {
       if (loader->putImageShm)
          lf = &drisw_shm_lf;
    }
