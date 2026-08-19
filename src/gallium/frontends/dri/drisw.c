@@ -500,14 +500,17 @@ drisw_init_screen(struct dri_screen *screen, bool driver_name_is_inferred)
    struct pipe_screen *pscreen = NULL;
    const struct drisw_loader_funcs *lf = &drisw_lf;
 
-   if (!loader) {
+   if (!loader && !screen->loader.image) {
       fprintf(stderr, "mesa: swrast interface not found\n");
       return NULL;
    }
 
    screen->swrast_no_present = debug_get_option_swrast_no_present();
 
-   if (loader->putImageShm)
+   /* The loader may omit the swrast extension entirely when it drives an
+    * image-loader drawable instead (see dri_create_drawable). Nothing will
+    * present through drisw_lf in that case, so the funcs are never called. */
+   if (loader && loader->putImageShm)
       lf = &drisw_shm_lf;
 
    bool success = false;
