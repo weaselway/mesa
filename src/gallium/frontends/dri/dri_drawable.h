@@ -156,6 +156,9 @@ void
 dri_flush_drawable(struct dri_drawable *dPriv);
 
 void
+dri_finish_drawable(struct dri_drawable *dPriv);
+
+void
 drisw_update_tex_buffer(struct dri_drawable *drawable,
                         struct dri_context *ctx,
                         struct pipe_resource *res);
