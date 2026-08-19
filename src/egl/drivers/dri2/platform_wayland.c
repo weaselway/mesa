@@ -837,7 +837,7 @@ dri2_wl_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
    dri2_surf->wl_win = window;
    dri2_surf->wl_win->driver_private = dri2_surf;
    dri2_surf->wl_win->destroy_window_callback = destroy_window_callback;
-   if (!dri2_dpy->swrast_not_kms)
+   if (!dri2_dpy->swrast_not_kms || dri2_dpy->swrast_dmabuf)
       dri2_surf->wl_win->resize_callback = resize_callback;
 
    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
@@ -1849,6 +1849,13 @@ dri2_wl_swap_buffers_with_damage(_EGLDisplay *disp, _EGLSurface *draw,
     *     and glthread causes troubles (see #7624 and #8136)
     */
    dri2_flush_drawable_for_swapbuffers(disp, draw);
+
+   /* The buffer we are about to attach carries no implicit fence, so submitting
+    * the frame is not enough -- the compositor would sample it mid-draw. Block
+    * until the GPU is actually done with it. */
+   if (dri2_dpy->swrast_dmabuf)
+      dri_finish_drawable(dri2_surf->dri_drawable);
+
    dri_invalidate_drawable(dri2_surf->dri_drawable);
 
    if (dri2_surf->throttle_callback && throttle(dri2_dpy, dri2_surf) == -1)
@@ -1863,12 +1870,19 @@ dri2_wl_swap_buffers_with_damage(_EGLDisplay *disp, _EGLSurface *draw,
    if (update_buffers_if_needed(dri2_surf, &flow) < 0)
       return _eglError(EGL_BAD_ALLOC, "dri2_swap_buffers");
 
-   if (draw->SwapInterval > 0) {
-      dri2_surf->throttle_callback =
-         wl_surface_frame(dri2_surf->wayland_surface.wrapper);
-      wl_callback_add_listener(dri2_surf->throttle_callback, &throttle_listener,
-                               dri2_surf);
-   }
+   /* Throttle to the compositor's frame callback even when the application
+    * asked for SwapInterval 0. Upstream only falls back to a wl_display_sync
+    * below, which round-trips in well under a frame and so paces nothing: an
+    * unthrottled client then drives the compositor to composite (and, here,
+    * RDP-encode) at whatever rate it can render. That is not a cost this
+    * session can absorb, so interval 0 is treated as 1.
+    *
+    * This must be requested before the wl_surface_commit further down, since
+    * wl_surface_frame is double-buffered surface state. */
+   dri2_surf->throttle_callback =
+      wl_surface_frame(dri2_surf->wayland_surface.wrapper);
+   wl_callback_add_listener(dri2_surf->throttle_callback, &throttle_listener,
+                            dri2_surf);
 
    dri2_surf->back->age = 1;
    dri2_surf->current = dri2_surf->back;
@@ -2653,6 +2667,13 @@ dri2_initialize_wayland_drm_extensions(struct dri2_egl_display *dri2_dpy)
    /* We couldn't retrieve a render node from the dma-buf feedback (or the
     * feedback was not advertised at all), so we must fallback to wl_drm. */
    if (dri2_dpy->fd_render_gpu == -1) {
+      /* Unless there is no render node to be had at all: on WSL the GPU is
+       * reached through dxcore, so the compositor's main_device names nothing
+       * we can open. The dma-buf formats from the feedback are still good, and
+       * the driver is loaded as a swrast target instead. */
+      if (dri2_dpy->wl_dmabuf)
+         return true;
+
       /* wl_drm not advertised by compositor, so can't continue */
       if (dri2_dpy->wl_drm_name == 0)
          return false;
@@ -2711,6 +2732,16 @@ dri2_initialize_wayland_drm(_EGLDisplay *disp)
    if (!dri2_initialize_wayland_drm_extensions(dri2_dpy))
       goto cleanup;
 
+   /* No DRM node anywhere, but the compositor speaks dma-buf: the driver has
+    * to come up as a swrast target (that is how d3d12 is reached through
+    * dxcore) while buffers still travel as dma-bufs. Skip all the fd-based
+    * device and driver probing below, which has nothing to work with. */
+   if (dri2_dpy->fd_render_gpu == -1 && dri2_dpy->wl_dmabuf) {
+      dri2_dpy->driver_name = strdup(disp->Options.Zink ? "zink" : "swrast");
+      dri2_dpy->swrast_dmabuf = true;
+      goto got_driver_name;
+   }
+
    loader_get_user_preferred_fd(&dri2_dpy->fd_render_gpu,
                                 &dri2_dpy->fd_display_gpu);
 
@@ -2741,6 +2772,7 @@ dri2_initialize_wayland_drm(_EGLDisplay *disp)
       goto cleanup;
    }
 
+got_driver_name:
    dri2_detect_swrast_kopper(disp);
 
    dri2_dpy->loader_extensions = dri2_dpy->kopper ? kopper_loader_extensions
@@ -2749,12 +2781,23 @@ dri2_initialize_wayland_drm(_EGLDisplay *disp)
    if (!dri2_create_screen(disp))
       goto cleanup;
 
-   if (!dri2_setup_device(disp, false)) {
+   if (!dri2_setup_device(disp, dri2_dpy->fd_render_gpu == -1)) {
       _eglError(EGL_NOT_INITIALIZED, "DRI2: failed to setup EGLDevice");
       goto cleanup;
    }
 
    dri2_setup_screen(disp);
+
+   /* Without a DRM node this path is only viable if the driver really can hand
+    * out dma-bufs; the drawables are wired to the image loader and there is no
+    * shm fallback left within this display. Fail so that eglInitialize retries
+    * with software rendering, which is what a driver like that wants anyway. */
+   if (dri2_dpy->fd_render_gpu == -1 &&
+       (!dri2_dpy->has_dmabuf_import || !dri2_dpy->has_dmabuf_export)) {
+      _eglLog(_EGL_WARNING,
+              "wayland-egl: no render node and driver cannot export dma-bufs");
+      goto cleanup;
+   }
 
    dri2_wl_setup_swap_interval(disp);
 

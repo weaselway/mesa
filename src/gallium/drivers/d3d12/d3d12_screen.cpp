@@ -50,6 +50,10 @@
 
 #include "frontend/sw_winsys.h"
 
+#if !defined(_WIN32) && !defined(_GAMING_XBOX)
+#include "drm-uapi/drm.h"
+#endif
+
 #include "git_sha1.h"
 
 #ifndef _GAMING_XBOX
@@ -233,6 +237,23 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
       return;
 
    u_init_pipe_screen_caps(&screen->base, caps->accelerated);
+
+#if !defined(_WIN32) && !defined(_GAMING_XBOX)
+   /* WSL: the host GPU is reached through /dev/dxg, not a DRM render node, so
+    * u_init_pipe_screen_caps() cannot learn DRM_CAP_PRIME and leaves this at 0,
+    * which in turn suppresses EXT_image_dma_buf_import{,_modifiers} in EGL and
+    * makes the compositor fall back to wl_shm for every client buffer.
+    *
+    * We do implement the export/import round trip: WINSYS_HANDLE_TYPE_FD maps
+    * onto D3D12 CreateSharedHandle/OpenSharedHandle, whose handle is a real fd
+    * on this platform and survives being passed to another process over
+    * SCM_RIGHTS. The stride/offset/modifier that ride along with a dma-buf are
+    * meaningless to us -- OpenSharedHandle recovers the true layout from the
+    * resource -- but both ends of the handoff are this same driver, so nothing
+    * outside our own code has to agree with that convention.
+    */
+   caps->dmabuf = DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT;
+#endif
 
    caps->prefer_real_buffer_in_constbuf0 = true;
    caps->npot_textures = true;
