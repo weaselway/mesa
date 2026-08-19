@@ -243,6 +243,11 @@ struct dri2_egl_display {
    bool kopper;
    bool swrast;
    bool swrast_not_kms;
+   /* Screen is created as a swrast target (no DRM node to probe) but a real GPU
+    * is behind it and buffers reach the compositor as dma-bufs, not shm. Under
+    * WSL that is d3d12 via dxcore. Such a display needs the GPU-side handling
+    * that swrast_not_kms otherwise switches off. */
+   bool swrast_dmabuf;
    int min_swap_interval;
    int max_swap_interval;
    int default_swap_interval;
