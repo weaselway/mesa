@@ -1561,7 +1561,12 @@ update_buffers_if_needed(struct dri2_egl_surface *dri2_surf,
 {
    MESA_TRACE_FUNC_FLOW(flow);
 
-   if (dri2_surf->back != NULL)
+   /* A failed get_back_bo() leaves ->back pointing at a color buffer slot whose
+    * dri_image it could not allocate. Testing ->back alone would then report
+    * success for every later call, and the NULL image reaches image_get_buffers()
+    * and the swap path, which both dereference it. Retry the allocation instead,
+    * so a genuine failure surfaces as an EGL error rather than a segfault. */
+   if (dri2_surf->back != NULL && dri2_surf->back->dri_image != NULL)
       return 0;
 
    return update_buffers(dri2_surf, flow);

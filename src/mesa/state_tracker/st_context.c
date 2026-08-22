@@ -361,6 +361,7 @@ st_destroy_context_priv(struct st_context *st, bool destroy_pipe)
 
    /* free glReadPixels cache data */
    st_invalidate_readpix_cache(st);
+   pipe_resource_reference(&st->async_readpix_staging, NULL);
    util_throttle_deinit(st->screen, &st->throttle);
 
    cso_destroy_context(st->cso_context);
