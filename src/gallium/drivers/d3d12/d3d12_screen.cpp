@@ -321,6 +321,11 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
 
    caps->texture_buffer_objects = true;
 
+   /* d3d12_direct_copy() implements texture -> buffer via CopyTextureRegion
+    * with a PLACED_FOOTPRINT destination, which D3D12 requires to have a
+    * 256-byte row pitch. */
+   caps->texture_to_buffer_copy_row_alignment = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
+
    caps->texture_transfer_modes = PIPE_TEXTURE_TRANSFER_BLIT;
 
    caps->endianness = PIPE_ENDIAN_NATIVE; /* unsure */
