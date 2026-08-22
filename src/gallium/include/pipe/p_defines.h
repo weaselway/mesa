@@ -1087,6 +1087,16 @@ struct pipe_caps {
    unsigned timer_resolution;
    unsigned min_map_buffer_alignment;
    unsigned texture_buffer_offset_alignment;
+   /* Row-pitch alignment, in bytes, required to copy a texture region directly
+    * into a buffer resource with resource_copy_region(). 0 means the driver
+    * cannot do texture -> buffer copies at all, which is the default.
+    *
+    * A driver setting this promises that resource_copy_region() accepts a
+    * PIPE_BUFFER destination with a non-buffer source, treating dst_box->x as a
+    * byte offset, provided the source region's row stride is a multiple of this
+    * value. It must not silently pad rows to reach the alignment: the caller
+    * owns the destination layout. */
+   unsigned texture_to_buffer_copy_row_alignment;
    unsigned linear_image_pitch_alignment;
    unsigned linear_image_base_address_alignment;
    /* pipe_texture_transfer_mode */
