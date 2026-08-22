@@ -113,6 +113,36 @@ d3d12_bo_wrap_res(struct d3d12_screen *screen, ID3D12Resource *res, enum d3d12_r
    return bo;
 }
 
+/* Re-entrancy guard for the buffer reclaim.
+ *
+ * pipebuffer calls into d3d12_bufmgr_create_buffer() with its own allocator
+ * lock held: pb_slab_manager_create_buffer() takes mgr->mutex and then, still
+ * holding it, calls pb_slab_create() to get the slab's backing buffer
+ * (pb_bufmgr_slab.c:393-397). Reclaiming from underneath that runs
+ * d3d12_bo_unreference() -> pb_destroy() -> pb_slab_buffer_destroy(), which
+ * locks the *same* mgr->mutex (pb_bufmgr_slab.c:197) on the same thread. That
+ * mutex is not recursive, so it is an unconditional deadlock -- and since a
+ * compositor dispatches SIGINT from its main loop, the wedged process cannot
+ * even be interrupted with Ctrl-C.
+ *
+ * While an allocation is in progress the reclaim is therefore skipped. Both
+ * entry points bail out before touching pending_free_list, so nothing is lost:
+ * anything ready to be freed stays queued and is reclaimed by the next call
+ * from a safe context, which d3d12_reset_batch() makes on every flush.
+ *
+ * Thread-local rather than per-screen because the property being tracked is
+ * "this thread is inside pipebuffer", and pipebuffer's locks are what make
+ * concurrent allocations on other threads safe to reclaim from.
+ */
+static thread_local unsigned d3d12_allocating_depth = 0;
+
+namespace {
+struct d3d12_allocating_scope {
+   d3d12_allocating_scope() { d3d12_allocating_depth++; }
+   ~d3d12_allocating_scope() { d3d12_allocating_depth--; }
+};
+}
+
 struct d3d12_bo *
 d3d12_bo_new(struct d3d12_screen *screen, uint64_t size, const pb_desc *pb_desc)
 {
@@ -228,6 +258,11 @@ d3d12_bo_unreference(struct d3d12_bo *bo)
 bool
 d3d12_screen_reclaim_completed(struct d3d12_screen *screen)
 {
+   /* Freeing here would re-enter the allocator that is calling us. See the
+    * comment on d3d12_allocating_depth. */
+   if (d3d12_allocating_depth)
+      return false;
+
    uint64_t completed = screen->fence->GetCompletedValue();
    struct list_head retired;
    list_inithead(&retired);
@@ -255,6 +290,13 @@ d3d12_screen_reclaim_one(struct d3d12_screen *screen)
 {
    uint64_t target = 0;
    bool have_target = false;
+
+   /* As above -- and this one would additionally block on a fence while
+    * holding pipebuffer's allocator lock. Returning false ends the caller's
+    * out-of-memory retry loop, so an allocation that only a reclaim could have
+    * satisfied fails instead of deadlocking. */
+   if (d3d12_allocating_depth)
+      return false;
 
    mtx_lock(&screen->pending_free_lock);
    if (!list_is_empty(&screen->pending_free_list)) {
@@ -398,6 +440,9 @@ d3d12_bufmgr_create_buffer(struct pb_manager *pmgr,
 {
    struct d3d12_bufmgr *mgr = d3d12_bufmgr(pmgr);
    struct d3d12_buffer *buf;
+   /* pipebuffer may hold an allocator lock across this call; nothing below may
+    * free a buffer. See the comment on d3d12_allocating_depth. */
+   d3d12_allocating_scope allocating;
 
    buf = CALLOC_STRUCT(d3d12_buffer);
    if (!buf)
