@@ -61,6 +61,85 @@ get_subresource_id(enum pipe_texture_target target, unsigned subres, unsigned st
    return subres + plane_slice * array_size * stride;
 }
 
+/* Copy a texture subregion straight into a buffer, on the GPU.
+ *
+ * This is the piece that lets a PBO readback be asynchronous on a driver with
+ * no shader-image support: without it, st_ReadPixels has no way to move pixels
+ * into the PBO except d3d12_transfer_map(), which allocates a staging buffer
+ * and then calls d3d12_flush_cmdlist_and_wait() -- a full GPU stall on the
+ * calling thread, per frame.
+ *
+ * D3D12 requires the buffer side of a CopyTextureRegion to be described as a
+ * PLACED_FOOTPRINT whose RowPitch is a multiple of
+ * D3D12_TEXTURE_DATA_PITCH_ALIGNMENT (256). We deliberately do *not* pad to
+ * satisfy that: the destination is a GL pixel buffer whose contents the client
+ * will read back as tightly packed rows, and silently inserting per-row padding
+ * would corrupt it. Callers must honour
+ * caps.texture_to_buffer_copy_row_alignment and fall back when the row stride
+ * does not satisfy it; the assert below is the backstop.
+ *
+ * dst_offset is a byte offset into the buffer, matching CopyBufferRegion.
+ */
+static void
+copy_texture_to_buffer_no_barriers(struct d3d12_context *ctx,
+                                   struct d3d12_resource *dst,
+                                   uint64_t dst_offset,
+                                   struct d3d12_resource *src,
+                                   unsigned src_level,
+                                   const struct pipe_box *psrc_box)
+{
+   D3D12_TEXTURE_COPY_LOCATION src_loc, dst_loc;
+   D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+   uint64_t src_res_offset = 0, dst_res_offset = 0;
+   unsigned src_z = psrc_box->z;
+   D3D12_BOX src_box;
+
+   int src_subres_stride = src->base.b.last_level + 1;
+   int src_array_size = src->base.b.array_size;
+
+   /* Ask the device for the canonical footprint of the source subresource, then
+    * narrow it to the region actually being copied. Taking Format from here
+    * rather than translating it ourselves keeps planar and typeless cases
+    * consistent with what the rest of the driver does. */
+   auto descr = GetDesc(d3d12_resource_underlying(src, &src_res_offset));
+   descr.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+   src_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+   src_loc.SubresourceIndex =
+      get_subresource_id(src->base.b.target, src_level, src_subres_stride,
+                         src_z, &src_z, src_array_size, src->plane_slice);
+   src_loc.pResource = d3d12_resource_resource(src);
+
+   d3d12_screen(ctx->base.screen)->dev->GetCopyableFootprints(
+      &descr, src_loc.SubresourceIndex, 1, 0, &footprint, nullptr, nullptr, nullptr);
+
+   dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+   dst_loc.pResource = d3d12_resource_underlying(dst, &dst_res_offset);
+   dst_loc.PlacedFootprint = footprint;
+   dst_loc.PlacedFootprint.Offset = dst_res_offset + dst_offset;
+   dst_loc.PlacedFootprint.Footprint.Width =
+      align(psrc_box->width, util_format_get_blockwidth(src->base.b.format));
+   dst_loc.PlacedFootprint.Footprint.Height =
+      align(psrc_box->height, util_format_get_blockheight(src->base.b.format));
+   dst_loc.PlacedFootprint.Footprint.Depth =
+      align(psrc_box->depth, util_format_get_blockdepth(src->base.b.format));
+   dst_loc.PlacedFootprint.Footprint.RowPitch =
+      util_format_get_stride(src->base.b.format, psrc_box->width);
+
+   assert(dst_loc.PlacedFootprint.Footprint.RowPitch %
+          D3D12_TEXTURE_DATA_PITCH_ALIGNMENT == 0);
+
+   src_box.left = psrc_box->x;
+   src_box.right = psrc_box->x + psrc_box->width;
+   src_box.top = psrc_box->y;
+   src_box.bottom = psrc_box->y + psrc_box->height;
+   src_box.front = src_z;
+   src_box.back = src_z + psrc_box->depth;
+
+   ctx->cmdlist->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, &src_box);
+   ctx->has_commands = true;
+}
+
 static void
 copy_subregion_no_barriers(struct d3d12_context *ctx,
                            struct d3d12_resource *dst,
@@ -236,6 +315,11 @@ d3d12_direct_copy(struct d3d12_context *ctx,
    if (src->base.b.target == PIPE_BUFFER) {
       copy_buffer_region_no_barriers(ctx, dst, pdst_box->x,
                                      src, psrc_box->x, psrc_box->width);
+   } else if (dst->base.b.target == PIPE_BUFFER) {
+      /* Texture -> buffer. pdst_box->x is a byte offset, as for the
+       * buffer -> buffer case above. */
+      copy_texture_to_buffer_no_barriers(ctx, dst, pdst_box->x,
+                                         src, src_level, psrc_box);
    } else if (psrc_box->height == pdst_box->height) {
       /* No flipping, we can forward this directly to resource_copy_region */
       copy_subregion_no_barriers(ctx, dst, dst_level,
