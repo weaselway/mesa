@@ -144,16 +144,18 @@ d3d12_bo_new(struct d3d12_screen *screen, uint64_t size, const pb_desc *pb_desc)
       d3d12_evicted : d3d12_resident;
 
    D3D12_HEAP_PROPERTIES heap_pris = GetCustomHeapProperties(dev, heap_type);
-   d3d12_screen_reclaim_completed(screen);
-   HRESULT hres;
-   do {
-      hres = dev->CreateCommittedResource(&heap_pris,
-                                          heap_flags,
-                                          &res_desc,
-                                          D3D12_RESOURCE_STATE_COMMON,
-                                          NULL,
-                                          IID_PPV_ARGS(&res));
-   } while (hres == E_OUTOFMEMORY && d3d12_screen_reclaim_one(screen));
+
+   /* No reclaiming here: this runs as pipebuffer's provider callback, and
+    * pb_slab_manager_create_buffer() holds mgr->mutex across it
+    * (pb_bufmgr_slab.c). Freeing a buffer from here would take the same
+    * non-recursive mutex in pb_slab_buffer_destroy() and deadlock. The
+    * caller, init_buffer(), reclaims and retries instead. */
+   HRESULT hres = dev->CreateCommittedResource(&heap_pris,
+                                               heap_flags,
+                                               &res_desc,
+                                               D3D12_RESOURCE_STATE_COMMON,
+                                               NULL,
+                                               IID_PPV_ARGS(&res));
 
    if (FAILED(hres))
       return NULL;
