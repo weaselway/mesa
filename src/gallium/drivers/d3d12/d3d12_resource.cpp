@@ -1021,7 +1021,25 @@ d3d12_resource_get_param(struct pipe_screen *pscreen,
       return true;
 
    case PIPE_RESOURCE_PARAM_STRIDE:
-      *value = strides[res->plane_slice];
+      /* strides[] above describes a *staging* buffer: d3d12_resource_get_planes_info()
+       * pads the pitch to D3D12_TEXTURE_DATA_PITCH_ALIGNMENT (256) because that is
+       * what CopyTextureRegion() requires. That padding is not part of the texture's
+       * own layout, so it must not escape as the stride of an exported dma-buf --
+       * the importer then lays its rows out at the padded pitch while the shared
+       * resource has no such padding, which shears every row by a few pixels.
+       *
+       * Report the natural row stride instead, as other drivers do for an
+       * implicit-modifier dma-buf. Note the two values agree whenever
+       * width * blocksize is already 256-aligned, which is why only some window
+       * sizes were corrupted (at 4 bytes/pixel, those with width % 64 != 0).
+       *
+       * The transfer path is unaffected: it reads strides[] directly rather than
+       * going through resource_get_param().
+       */
+      *value = util_format_get_stride(planes[res->plane_slice]->format,
+                                      util_format_get_plane_width(res->base.b.format,
+                                                                  res->plane_slice,
+                                                                  res->first_plane->width0));
       return true;
 
    case PIPE_RESOURCE_PARAM_OFFSET:

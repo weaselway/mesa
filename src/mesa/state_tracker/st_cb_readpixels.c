@@ -47,6 +47,7 @@
 #include "state_tracker/st_pbo.h"
 #include "state_tracker/st_texture.h"
 #include "state_tracker/st_util.h"
+#include "util/box.h"
 
 
 /* The readpixels cache caches a blitted staging texture so that back-to-back
@@ -276,18 +277,28 @@ fail:
 }
 
 /**
- * Create a staging texture and blit the requested region to it.
+ * Blit the requested region to a staging texture.
+ *
+ * @reuse may be a texture returned by an earlier call, in which case it is
+ * blitted into again rather than a new one being allocated. Allocating a
+ * staging texture per call is a measurable per-frame cost for a caller that
+ * reads back continuously. The caller owns the check that @reuse still matches
+ * the requested format and size, and that nothing is still reading from it;
+ * a NULL @reuse allocates as before.
+ *
+ * Returns a reference the caller owns either way.
  */
 static struct pipe_resource *
 blit_to_staging(struct st_context *st, struct gl_renderbuffer *rb,
                    bool invert_y,
                    GLint x, GLint y, GLsizei width, GLsizei height,
                    GLenum format,
-                   enum pipe_format src_format, enum pipe_format dst_format)
+                   enum pipe_format src_format, enum pipe_format dst_format,
+                   struct pipe_resource *reuse)
 {
    struct pipe_screen *screen = st->screen;
    struct pipe_resource dst_templ;
-   struct pipe_resource *dst;
+   struct pipe_resource *dst = NULL;
    struct pipe_blit_info blit;
 
    /* We are creating a texture of the size of the region being read back.
@@ -297,21 +308,28 @@ blit_to_staging(struct st_context *st, struct gl_renderbuffer *rb,
         !util_is_power_of_two_or_zero(height)))
       return NULL;
 
-   /* create the destination texture */
-   memset(&dst_templ, 0, sizeof(dst_templ));
-   dst_templ.target = PIPE_TEXTURE_2D;
-   dst_templ.format = dst_format;
-   if (util_format_is_depth_or_stencil(dst_format))
-      dst_templ.bind |= PIPE_BIND_DEPTH_STENCIL;
-   else
-      dst_templ.bind |= PIPE_BIND_RENDER_TARGET;
-   dst_templ.usage = PIPE_USAGE_STAGING;
+   if (reuse) {
+      assert(reuse->format == dst_format &&
+             reuse->width0 == (unsigned) width &&
+             reuse->height0 == (unsigned) height);
+      pipe_resource_reference(&dst, reuse);
+   } else {
+      /* create the destination texture */
+      memset(&dst_templ, 0, sizeof(dst_templ));
+      dst_templ.target = PIPE_TEXTURE_2D;
+      dst_templ.format = dst_format;
+      if (util_format_is_depth_or_stencil(dst_format))
+         dst_templ.bind |= PIPE_BIND_DEPTH_STENCIL;
+      else
+         dst_templ.bind |= PIPE_BIND_RENDER_TARGET;
+      dst_templ.usage = PIPE_USAGE_STAGING;
 
-   st_gl_texture_dims_to_pipe_dims(GL_TEXTURE_2D, width, height, 1,
-                                   &dst_templ.width0, &dst_templ.height0,
-                                   &dst_templ.depth0, &dst_templ.array_size);
+      st_gl_texture_dims_to_pipe_dims(GL_TEXTURE_2D, width, height, 1,
+                                      &dst_templ.width0, &dst_templ.height0,
+                                      &dst_templ.depth0, &dst_templ.array_size);
 
-   dst = screen->resource_create(screen, &dst_templ);
+      dst = screen->resource_create(screen, &dst_templ);
+   }
    if (!dst)
       return NULL;
 
@@ -394,13 +412,113 @@ try_cached_readpixels(struct st_context *st, struct gl_renderbuffer *rb,
                                                 0, 0,
                                                 rb->Width,
                                                 rb->Height, format,
-                                                src_format, dst_format);
+                                                src_format, dst_format, NULL);
    }
 
    /* Return an owning reference to stay consistent with the non-cached path */
    pipe_resource_reference(&dst, st->readpix_cache.cache);
 
    return dst;
+}
+
+/* Asynchronous PBO readback for drivers that cannot do try_pbo_readpixels().
+ *
+ * try_pbo_readpixels() needs shader images to write the PBO from a fragment
+ * shader. Where those are missing, the only other route into a PBO was to blit
+ * into a staging texture and then map it -- and mapping means waiting for the
+ * GPU and memcpying on the calling thread, per call.
+ *
+ * GL does not require that. glReadPixels into a bound PBO is explicitly allowed
+ * to be asynchronous; the synchronisation point is the later map of the buffer,
+ * not the read itself. So when the driver can copy a texture region straight
+ * into a buffer resource, we can issue the blit and the copy and return without
+ * ever touching the pixels, leaving the caller to sync via a fence or by
+ * mapping when it is ready.
+ *
+ * Returns true if the copy was issued.
+ */
+static bool
+try_async_pbo_blit_readpixels(struct st_context *st, struct gl_renderbuffer *rb,
+                              bool invert_y,
+                              GLint x, GLint y, GLsizei width, GLsizei height,
+                              GLenum format, GLenum type,
+                              enum pipe_format src_format,
+                              enum pipe_format dst_format,
+                              const struct gl_pixelstore_attrib *pack,
+                              void *pixels)
+{
+   struct pipe_screen *screen = st->screen;
+   struct pipe_resource *dst_buf = pack->BufferObj->buffer;
+   struct pipe_resource *staging;
+   struct pipe_resource *cached;
+   unsigned row_alignment = screen->caps.texture_to_buffer_copy_row_alignment;
+   unsigned blocksize = util_format_get_blocksize(dst_format);
+   unsigned stride = (unsigned) width * blocksize;
+   intptr_t buf_offset = (intptr_t) pixels;
+   struct pipe_box src_box;
+
+   if (!row_alignment || !dst_buf)
+      return false;
+
+   /* The destination layout is the caller's, and we must not pad it to reach
+    * the driver's row alignment. Only take this path when the rows already
+    * line up naturally. */
+   if (stride % row_alignment != 0)
+      return false;
+
+   /* Anything other than a tightly packed, unswapped, non-inverted destination
+    * would need us to reinterpret the copy, which a straight region copy
+    * cannot express. */
+   if (pack->SwapBytes || pack->LsbFirst || pack->Invert ||
+       pack->SkipImages || pack->ImageHeight ||
+       (pack->RowLength && pack->RowLength != width))
+      return false;
+
+   if (_mesa_image_row_stride(pack, width, format, type) != (GLint) stride)
+      return false;
+
+   buf_offset += (intptr_t) pack->SkipRows * stride +
+                 (intptr_t) pack->SkipPixels * blocksize;
+   if (buf_offset < 0 ||
+       (uint64_t) buf_offset + (uint64_t) stride * height > dst_buf->width0)
+      return false;
+
+   /* Copy offsets into a buffer are byte offsets, and must satisfy the same
+    * row alignment as the pitch for the footprint to start on a valid
+    * boundary. */
+   if (buf_offset % row_alignment != 0)
+      return false;
+
+   /* Reuse last call's staging texture when it still fits. A caller reading
+    * back continuously hits this on nearly every frame, which removes a
+    * resource allocation from the per-frame path; the blit overwrites the whole
+    * region, so no stale contents can survive. */
+   cached = st->async_readpix_staging;
+   if (cached &&
+       (cached->format != dst_format ||
+        cached->width0 != (unsigned) width ||
+        cached->height0 != (unsigned) height))
+      cached = NULL;
+
+   staging = blit_to_staging(st, rb, invert_y, x, y, width, height, format,
+                             src_format, dst_format, cached);
+   if (!staging)
+      return false;
+
+   /* blit_to_staging() already applied x/y and any y-flip, so the staging
+    * texture holds the region at its origin. */
+   u_box_2d(0, 0, width, height, &src_box);
+
+   st->pipe->resource_copy_region(st->pipe, dst_buf, 0, buf_offset, 0, 0,
+                                  staging, 0, &src_box);
+
+   /* Hold the reference for next time rather than dropping it. The copy above
+    * is queued, not complete, so the texture has to outlive this call
+    * regardless -- keeping it here is both cheaper and safer than letting the
+    * reference go and relying on the driver's own batch reference. */
+   pipe_resource_reference(&st->async_readpix_staging, staging);
+   pipe_resource_reference(&staging, NULL);
+   return true;
 }
 
 /**
@@ -510,6 +628,17 @@ st_ReadPixels(struct gl_context *ctx, GLint x, GLint y,
       goto fallback;
    }
 
+   /* Prefer staying off the CPU entirely. Only worth trying when a PBO is
+    * bound: without one the caller has given us a plain pointer and is
+    * expecting the pixels to be there on return. */
+   if (pack->BufferObj &&
+       try_async_pbo_blit_readpixels(st, rb,
+                                     _mesa_fb_orientation(ctx->ReadBuffer) == Y_0_TOP,
+                                     x, y, width, height, format, type,
+                                     src_format, dst_format, pack, pixels)) {
+      return;
+   }
+
    /* Cache a staging texture for back-to-back ReadPixels, to avoid CPU-GPU
     * synchronization overhead.
     */
@@ -531,7 +660,7 @@ st_ReadPixels(struct gl_context *ctx, GLint x, GLint y,
       dst = blit_to_staging(st, rb,
                             _mesa_fb_orientation(ctx->ReadBuffer) == Y_0_TOP,
                             x, y, width, height, format,
-                            src_format, dst_format);
+                            src_format, dst_format, NULL);
       if (!dst)
          goto fallback;
 

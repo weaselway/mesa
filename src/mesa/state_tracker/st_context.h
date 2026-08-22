@@ -281,6 +281,12 @@ struct st_context
       size_t hits;
    } readpix_cache;
 
+   /** Staging texture kept alive across calls by the asynchronous PBO readback
+    * path in st_ReadPixels(). Unlike readpix_cache above this holds no pixels
+    * between calls -- it is blitted into afresh every time -- so it needs no
+    * invalidation, only a size and format match. */
+   struct pipe_resource *async_readpix_staging;
+
    /** for glClear */
    struct {
       struct pipe_rasterizer_state raster;
