@@ -60,6 +60,14 @@ struct d3d12_bo {
     */
    uint64_t unique_id;
 
+   /* Set once a handle to this resource has crossed a process boundary, in
+    * either direction (see d3d12_resource_get_handle/from_handle). Such a
+    * resource can be read by a compositor that shares no queue with us and has
+    * no fence to wait on, so a submission that writes one cannot be treated as
+    * complete when it is merely submitted. Zeroed by the memset in
+    * d3d12_bo_wrap_res(), which is why this sits before local_context_states. */
+   bool exported;
+
 #ifndef NDEBUG
    bool is_front_buffer;
 #endif
