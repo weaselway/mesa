@@ -253,6 +253,15 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
     * outside our own code has to agree with that convention.
     */
    caps->dmabuf = DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT;
+
+   /* Every fence is already backed by an eventfd that SetEventOnCompletion()
+    * signals (see d3d12_fence_create_event), which is all a native fence fd has
+    * to be: something poll() reports ready when the GPU is done. Advertising it
+    * turns on EGL_ANDROID_native_fence_sync, which is not just a nicety here --
+    * clients that do their frame-end synchronization through EGL fences rather
+    * than eglSwapBuffers (Chromium's Ozone/Wayland backend, for one) otherwise
+    * never trigger a flush at all, and their rendering piles up unsubmitted. */
+   caps->native_fence_fd = true;
 #endif
 
    caps->prefer_real_buffer_in_constbuf0 = true;
