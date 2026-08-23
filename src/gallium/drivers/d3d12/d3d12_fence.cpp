@@ -26,6 +26,7 @@
 #include "d3d12_context.h"
 #include "d3d12_screen.h"
 
+#include "util/os_file.h"
 #include "util/u_memory.h"
 
 #include <dxguids/dxguids.h>
@@ -78,6 +79,44 @@ d3d12_create_fence(struct d3d12_screen *screen, bool signal_new)
 fail:
    destroy_fence(ret);
    return NULL;
+}
+
+/*
+ * Hand out a file descriptor that becomes readable once this fence signals.
+ *
+ * There is no sync_file to be had here -- the GPU is reached through /dev/dxg,
+ * not DRM -- but d3d12_fence_create_event() already backs every fence with an
+ * eventfd that SetEventOnCompletion() signals, and d3d12_fence_wait_event()
+ * already waits on it with sync_wait(). That is exactly the contract
+ * EGL_ANDROID_native_fence_sync needs: a descriptor a poll() reports ready when
+ * the GPU is done. So we register the event if it is not registered yet and
+ * dup the fd out.
+ *
+ * The consumer only polls, never reads, so the eventfd stays readable for every
+ * waiter once signalled.
+ */
+struct d3d12_fence *
+d3d12_import_fence_fd(struct d3d12_screen *screen, int fd)
+{
+   struct d3d12_fence *ret = CALLOC_STRUCT(d3d12_fence);
+   if (!ret)
+      return NULL;
+
+   ret->event_fd = os_dupfd_cloexec(fd);
+   if (ret->event_fd < 0) {
+      FREE(ret);
+      return NULL;
+   }
+
+   ret->type = PIPE_FD_TYPE_NATIVE_SYNC;
+   ret->event = (HANDLE)(size_t)ret->event_fd;
+   ret->foreign_fd = true;
+   ret->cmdqueue_fence = NULL;
+   ret->value = 0;
+   ret->signaled = false;
+
+   pipe_reference_init(&ret->reference, 1);
+   return ret;
 }
 
 struct d3d12_fence *
@@ -157,6 +196,13 @@ d3d12_fence_finish(struct d3d12_fence *fence, uint64_t timeout_ns)
    if (fence->signaled)
       return true;
 
+   if (fence->foreign_fd) {
+      /* Nothing to query -- the fd is the whole fence. */
+      fence->signaled = d3d12_fence_wait_event(fence->event, fence->event_fd,
+                                               timeout_ns);
+      return fence->signaled;
+   }
+
    bool complete = fence->cmdqueue_fence->GetCompletedValue() >= fence->value;
    if (!complete && timeout_ns) {
       if (timeout_ns == OS_TIMEOUT_INFINITE || timeout_ns > MaxTimeoutInNs) {
@@ -189,6 +235,9 @@ fence_finish(struct pipe_screen *pscreen, struct pipe_context *pctx,
 void
 d3d12_fence_signal_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value)
 {
+   if (fence->foreign_fd)
+      return;
+
    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
       value = fence->value;
    queue->Signal(fence->cmdqueue_fence, value);
@@ -197,14 +246,36 @@ d3d12_fence_signal_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, ui
 void
 d3d12_fence_wait_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint64_t value)
 {
+   if (fence->foreign_fd) {
+      /* No ID3D12Fence to make the queue wait on, so block here instead. */
+      d3d12_fence_wait_event(fence->event, fence->event_fd, OS_TIMEOUT_INFINITE);
+      return;
+   }
+
    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
       value = fence->value;
    queue->Wait(fence->cmdqueue_fence, value);
 }
+
+#ifndef _WIN32
+static int
+fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
+{
+   struct d3d12_fence *fence = d3d12_fence(pfence);
+
+   if (!fence->foreign_fd && !d3d12_fence_ensure_event_registered(fence))
+      return -1;
+
+   return os_dupfd_cloexec(fence->event_fd);
+}
+#endif
 
 void
 d3d12_screen_fence_init(struct pipe_screen *pscreen)
 {
    pscreen->fence_reference = fence_reference;
    pscreen->fence_finish = fence_finish;
+#ifndef _WIN32
+   pscreen->fence_get_fd = fence_get_fd;
+#endif
 }
