@@ -254,6 +254,8 @@ d3d12_start_batch(struct d3d12_context *ctx, struct d3d12_batch *batch)
    struct d3d12_screen *screen = d3d12_screen(ctx->base.screen);
    d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);
 
+   batch->wrote_exported = false;
+
    /* Create or reset global command list */
    if (ctx->cmdlist) {
       if (FAILED(ctx->cmdlist->Reset(batch->cmdalloc, NULL))) {
@@ -484,6 +486,9 @@ d3d12_batch_reference_resource(struct d3d12_batch *batch,
    uint8_t new_data = write ? batch_bo_reference_written : batch_bo_reference_read;
    uint8_t old_data = (uint8_t)*state;
    *state = (old_data | new_data);
+
+   if (write && res->bo && res->bo->exported)
+      batch->wrote_exported = true;
 }
 
 void
