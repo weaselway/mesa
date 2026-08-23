@@ -61,6 +61,9 @@ struct d3d12_batch {
    bool has_errors;
    bool pending_memory_barrier;
 
+   /* Whether this batch wrote to a resource another process can see. */
+   bool wrote_exported;
+
    uint64_t submit_id;
    uint32_t ctx_id, ctx_index;
 };

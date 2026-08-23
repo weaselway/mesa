@@ -30,6 +30,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -161,12 +162,22 @@ static inline int sync_merge(const char *name, int fd1, int fd2)
 
 /**
  * Check if the fd represents a valid fence-fd.
+ *
+ * WSL: d3d12's native fence fds are eventfds, not sync_files -- the GPU is
+ * reached through /dev/dxg, which has no dma_fence to wrap, and the kernel here
+ * is built without CONFIG_SW_SYNC so userspace cannot mint one either. They are
+ * still waitable with poll(), which is all sync_wait() and its callers do, so
+ * accept any live fd rather than demanding SYNC_IOC_FILE_INFO. The stricter
+ * check only fires in debug builds, where it aborts the process.
  */
 static inline bool
 sync_valid_fd(int fd)
 {
 	struct sync_file_info info = {{0}};
-	return ioctl(fd, SYNC_IOC_FILE_INFO, &info) >= 0;
+	if (ioctl(fd, SYNC_IOC_FILE_INFO, &info) >= 0)
+		return true;
+
+	return fcntl(fd, F_GETFD) != -1;
 }
 
 static inline struct sync_file_info* sync_file_info(int32_t fd)
