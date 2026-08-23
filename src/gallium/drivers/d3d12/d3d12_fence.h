@@ -93,6 +93,10 @@ struct d3d12_fence {
    int event_fd;
    uint64_t value;
    bool signaled;
+
+   /* Imported from a foreign native-sync fd: there is no ID3D12Fence behind
+    * this one, only event_fd, and it can only be waited on by the CPU. */
+   bool foreign_fd;
 };
 
 static inline struct d3d12_fence *
@@ -106,6 +110,9 @@ d3d12_create_fence(struct d3d12_screen *screen, bool signal_new);
 
 struct d3d12_fence *
 d3d12_create_fence_raw(ID3D12Fence *d3d12_fence_obj, uint64_t fence_value);
+
+struct d3d12_fence *
+d3d12_import_fence_fd(struct d3d12_screen *screen, int fd);
 
 struct d3d12_fence *
 d3d12_open_fence(struct d3d12_screen *screen, HANDLE handle, const void *name, pipe_fd_type type);
