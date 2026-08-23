@@ -136,6 +136,14 @@
    MAP_FORMAT(R10G10B10A2, UINT) \
    MAP_FORMAT(R10G10B10A2, UNORM) \
 \
+   /* DXGI has no X2 variant, so borrow the A2 one exactly like the X8 formats \
+    * above do. Without this there is no opaque 10-bit format at all, and a \
+    * client that picks a 10-bit config (EGL sorts those first) cannot create \
+    * an EGL_EXT_present_opaque surface: Mesa demands the compositor advertise \
+    * the opaque twin XB30 of its AB30 buffer, and that never appears here. \
+    */ \
+   MAP_FORMAT2(R10G10B10X2, UNORM, R10G10B10A2, UNORM) \
+\
    MAP_FORMAT_NO_TYPELESS(B5G6R5, UNORM) \
    MAP_FORMAT_NO_TYPELESS(B5G5R5A1, UNORM) \
    MAP_FORMAT2_NO_TYPELESS(B5G5R5X1, UNORM, B5G5R5A1, UNORM) \
