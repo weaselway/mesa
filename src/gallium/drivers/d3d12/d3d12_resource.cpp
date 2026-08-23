@@ -323,7 +323,28 @@ init_texture(struct d3d12_screen *screen,
       }
    }
 
-   if (templ->bind & (PIPE_BIND_SCANOUT | PIPE_BIND_LINEAR))
+#if defined(_WIN32) || defined(_GAMING_XBOX)
+   const unsigned row_major_binds = PIPE_BIND_SCANOUT | PIPE_BIND_LINEAR;
+#else
+   /* WSL: there is no display engine to scan out of. PIPE_BIND_SCANOUT exists to
+    * guarantee a layout KMS can read, and nothing in this session ever will --
+    * buffers reach the compositor as shared handles, and OpenSharedHandle
+    * recovers the true layout from GetDesc(), so tiling is invisible to it. The
+    * same reasoning that makes the modifier meaningless makes this flag so.
+    *
+    * Honouring it costs the allocation outright: D3D12 permits ROW_MAJOR only
+    * for buffers and cross-adapter textures, so CreateCommittedResource rejects
+    * every 2D texture that asks for it. That is the whole of GBM_BO_USE_SCANOUT,
+    * which is what gfx::BufferUsage::SCANOUT maps to -- Chromium's main path.
+    *
+    * PIPE_BIND_LINEAR keeps its meaning. That one is a genuine request for a
+    * CPU-readable layout, which a shared handle cannot serve anyway, and failing
+    * the allocation beats handing back a buffer that lies about its layout.
+    */
+   const unsigned row_major_binds = PIPE_BIND_LINEAR;
+#endif
+
+   if (templ->bind & row_major_binds)
       desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
    HRESULT hres = E_FAIL;
@@ -824,6 +845,10 @@ d3d12_resource_from_handle(struct pipe_screen *pscreen,
    if (!res->bo) {
       res->bo = d3d12_bo_wrap_res(screen, d3d12_res, d3d12_permanently_resident);
    }
+   /* Imported the other way round, same reasoning as on export: this resource is
+    * visible to a process we share no queue with. */
+   if (res->bo)
+      res->bo->exported = true;
    init_valid_range(res);
 
    threaded_resource_init(&res->base.b, false);
@@ -864,7 +889,13 @@ d3d12_resource_get_handle(struct pipe_screen *pscreen,
                                       &d3d_handle);
       if (!d3d_handle)
          return false;
-      
+
+      /* From here on another process can sample this resource without sharing a
+       * queue with us and without any fence to wait on, so submissions writing
+       * it have to be waited out rather than merely flushed. See d3d12_flush(). */
+      if (res->bo)
+         res->bo->exported = true;
+
 #ifdef _WIN32
       handle->handle = d3d_handle;
 #else
