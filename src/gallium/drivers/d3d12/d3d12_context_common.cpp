@@ -170,7 +170,40 @@ d3d12_flush_cmdlist(struct d3d12_context *ctx)
    if (!ctx->has_commands)
       return false;
 
-   d3d12_end_batch(ctx, d3d12_current_batch(ctx));
+   struct d3d12_batch *batch = d3d12_current_batch(ctx);
+
+   d3d12_end_batch(ctx, batch);
+
+   /* A dma-buf normally carries implicit fences, so a producer may hand a buffer
+    * to a compositor as soon as the frame is submitted -- the importer's own
+    * rendering waits on them. Our "dma-buf" is a D3D12 shared handle with no
+    * fence attached (d3d12_resource_get_handle), and the compositor runs on a
+    * separate device and queue, so nothing downstream can know when this
+    * submission lands.
+    *
+    * Exposing EGL_ANDROID_native_fence_sync does not close this gap. It gets the
+    * fence as far as the client: Chromium creates one, and with no explicit-sync
+    * protocol on the compositor it tries to hand it over implicitly, by pushing
+    * it into the dma-buf with DMA_BUF_IOCTL_IMPORT_SYNC_FILE
+    * (wayland_buffer_manager_host.cc:459). That ioctl cannot work here -- the fd
+    * is a D3D12 shared handle, not a dma-buf -- and Chromium only logs the
+    * failure and commits anyway (wayland_surface.cc:520, the kDMAFence case has
+    * no CPU-wait fallback). So the compositor still gets no fence, and mutter is
+    * free to sample a frame that is still being drawn. A static page commits
+    * once, so the stale frame stays up until some unrelated repaint re-samples
+    * the buffer. Blocking here is what actually holds the frame back.
+    *
+    * This has to sit here rather than in d3d12_flush(): pipe_context::flush is
+    * only one of the ways a command list reaches the queue, and measurement
+    * showed Chromium's rendering almost never taking it (1 call against 6
+    * exported buffers over a 45s session). Every submission path funnels
+    * through here.
+    *
+    * Batches that only read exported resources -- a compositor sampling its
+    * clients -- do not pay for this.
+    */
+   if (batch->wrote_exported)
+      d3d12_fence_finish(batch->fence, OS_TIMEOUT_INFINITE);
 
    ctx->current_batch_idx++;
    if (ctx->current_batch_idx == ARRAY_SIZE(ctx->batches))
@@ -224,6 +257,24 @@ d3d12_flush_resource(struct pipe_context *pctx,
    d3d12_batch_reference_resource(d3d12_current_batch(ctx), res, true);
    ctx->has_commands = true;
 }
+
+#ifndef _WIN32
+static void
+d3d12_create_fence_fd(struct pipe_context *pctx,
+                      struct pipe_fence_handle **pfence,
+                      int fd,
+                      enum pipe_fd_type type)
+{
+   struct d3d12_screen *screen = d3d12_screen(pctx->screen);
+   struct d3d12_fence *fence = NULL;
+
+   if (type == PIPE_FD_TYPE_NATIVE_SYNC)
+      fence = d3d12_import_fence_fd(screen, fd);
+
+   d3d12_fence_reference((struct d3d12_fence **)pfence, NULL);
+   *pfence = (struct pipe_fence_handle *)fence;
+}
+#endif
 
 static void
 d3d12_signal(struct pipe_context *pipe,
@@ -603,6 +654,9 @@ d3d12_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 
    ctx->base.destroy = d3d12_context_destroy;
    ctx->base.flush = d3d12_flush;
+#ifndef _WIN32
+   ctx->base.create_fence_fd = d3d12_create_fence_fd;
+#endif
    ctx->base.flush_resource = d3d12_flush_resource;
    ctx->base.fence_server_signal = d3d12_signal;
    ctx->base.fence_server_sync = d3d12_wait;
