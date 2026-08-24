@@ -23,6 +23,12 @@
 
 #include "d3d12_screen.h"
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#include <xf86drm.h>
+#endif
+
 #include "d3d12_bufmgr.h"
 #ifdef HAVE_GALLIUM_D3D12_GRAPHICS
 #include "d3d12_compiler.h"
@@ -719,6 +725,10 @@ d3d12_destroy_screen(struct d3d12_screen *screen)
    mtx_destroy(&screen->varying_info_mutex);
 #endif // HAVE_GALLIUM_D3D12_GRAPHICS
 
+#ifndef _WIN32
+   if (screen->dxgdrm_fd >= 0)
+      close(screen->dxgdrm_fd);
+#endif
    if (screen->d3d12_mod)
       util_dl_close(screen->d3d12_mod);
 #ifdef HAVE_GALLIUM_D3D12_GRAPHICS
@@ -1407,6 +1417,45 @@ d3d12_query_memory_info(struct pipe_screen *pscreen, struct pipe_memory_info *in
    info->nr_device_memory_evictions = screen->num_evictions;
 }
 
+#ifndef _WIN32
+/* Find the dxgdrm render node, if the module is loaded. Matching on the driver
+ * name rather than taking the first node keeps this from grabbing a real GPU on
+ * a machine that has one. Returns -1 when there is none, which is not an error:
+ * everything still works, fences are just eventfds and cannot be imported into
+ * a syncobj. */
+static int
+d3d12_open_dxgdrm_node(void)
+{
+   drmDevicePtr devices[8];
+   int num_devs = drmGetDevices2(0, devices, ARRAY_SIZE(devices));
+   int fd = -1;
+
+   for (int i = 0; i < num_devs && fd < 0; i++) {
+      if (!(devices[i]->available_nodes & (1 << DRM_NODE_RENDER)))
+         continue;
+
+      int try_fd = open(devices[i]->nodes[DRM_NODE_RENDER],
+                        O_RDWR | O_CLOEXEC);
+      if (try_fd < 0)
+         continue;
+
+      drmVersionPtr version = drmGetVersion(try_fd);
+      if (version) {
+         if (!strcmp(version->name, "dxgdrm"))
+            fd = try_fd;
+         drmFreeVersion(version);
+      }
+      if (fd != try_fd)
+         close(try_fd);
+   }
+
+   if (num_devs > 0)
+      drmFreeDevices(devices, num_devs);
+
+   return fd;
+}
+#endif
+
 bool
 d3d12_init_screen_base(struct d3d12_screen *screen, struct sw_winsys *winsys, LUID *adapter_luid)
 {
@@ -1416,6 +1465,9 @@ d3d12_init_screen_base(struct d3d12_screen *screen, struct sw_winsys *winsys, LU
    d3d12_debug = static_cast<uint32_t>(debug_get_option_d3d12_debug());
 
    screen->winsys = winsys;
+#ifndef _WIN32
+   screen->dxgdrm_fd = d3d12_open_dxgdrm_node();
+#endif
    if (adapter_luid)
       screen->adapter_luid = *adapter_luid;
    mtx_init(&screen->descriptor_pool_mutex, mtx_plain);

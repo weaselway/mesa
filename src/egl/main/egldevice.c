@@ -26,10 +26,14 @@
  **************************************************************************/
 
 #ifdef HAVE_LIBDRM
+#include <fcntl.h>
+#include <string.h>
+#include <unistd.h>
 #include <xf86drm.h>
 #endif
 #include "util/compiler.h"
 #include "util/macros.h"
+#include "util/u_call_once.h"
 #include "util/u_debug.h"
 
 #include "eglcurrent.h"
@@ -233,6 +237,63 @@ out:
 }
 
 #ifdef HAVE_LIBDRM
+/* WSL: /dev/dxg is not a DRM device, so the d3d12 screen comes up as EGL's
+ * software device, which by construction has no render node to report. Anything
+ * that asks an EGLDisplay which DRM device backs it then gets nothing, and two
+ * things we want turn out to gate on exactly that:
+ * meta-wayland-dma-buf.c:1932 drops zwp_linux_dmabuf_v1 to version 3 (no
+ * feedback) without a device path, and meta-wayland-linux-drm-syncobj.c:481
+ * refuses to advertise linux-drm-syncobj-v1 at all.
+ *
+ * The dxgdrm module exists to be that answer -- a render node that allocates
+ * nothing, whose job is to be identified and to carry syncobjs. If one is
+ * present, report its path for the software device. Matching on the driver name
+ * rather than "the only DRM device around" keeps this from firing on a genuine
+ * software device that happens to share a machine with a real GPU.
+ */
+static const char *_egl_software_render_node;
+
+static void
+_eglInitSoftwareRenderNode(void)
+{
+   drmDevicePtr devices[64];
+   int num_devs = drmGetDevices2(0, devices, ARRAY_SIZE(devices));
+
+   for (int i = 0; i < num_devs; i++) {
+      if (_egl_software_render_node ||
+          !(devices[i]->available_nodes & (1 << DRM_NODE_RENDER)))
+         continue;
+
+      const char *path = devices[i]->nodes[DRM_NODE_RENDER];
+      int fd = open(path, O_RDWR | O_CLOEXEC);
+      if (fd < 0)
+         continue;
+
+      drmVersionPtr version = drmGetVersion(fd);
+      if (version) {
+         if (!strcmp(version->name, "dxgdrm"))
+            _egl_software_render_node = strdup(path);
+         drmFreeVersion(version);
+      }
+      close(fd);
+   }
+
+   if (num_devs > 0)
+      drmFreeDevices(devices, num_devs);
+}
+
+/* Deliberately lazy rather than folded into _eglDeviceRefreshList(): that only
+ * runs from eglQueryDevicesEXT(), which a client asking its own display for a
+ * device path never calls. */
+static const char *
+_eglSoftwareRenderNode(void)
+{
+   static util_once_flag once = UTIL_ONCE_FLAG_INIT;
+
+   util_call_once(&once, _eglInitSoftwareRenderNode);
+   return _egl_software_render_node;
+}
+
 drmDevicePtr
 _eglDeviceDrm(_EGLDevice *dev)
 {
@@ -353,10 +414,10 @@ _eglQueryDeviceStringEXT(_EGLDevice *dev, EGLint name)
       if (!_eglDeviceSupports(dev, _EGL_DEVICE_DRM_RENDER_NODE))
          break;
 #ifdef HAVE_LIBDRM
-      /* EGLDevice represents a software device, so no render node
-       * should be advertised. */
+      /* A software device has no render node of its own -- unless a dxgdrm
+       * node is standing in for one. NULL when there is none. */
       if (_eglDeviceSupports(dev, _EGL_DEVICE_SOFTWARE))
-         return NULL;
+         return _eglSoftwareRenderNode();
       /* We create EGLDevice's only for render capable devices. */
       assert(dev->device->available_nodes & (1 << DRM_NODE_RENDER));
       return dev->device->nodes[DRM_NODE_RENDER];
