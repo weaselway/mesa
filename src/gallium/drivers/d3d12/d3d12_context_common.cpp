@@ -170,17 +170,18 @@ d3d12_flush_cmdlist(struct d3d12_context *ctx)
     * separate device and queue, so nothing downstream can know when this
     * submission lands.
     *
-    * Exposing EGL_ANDROID_native_fence_sync does not close this gap. It gets the
-    * fence as far as the client: Chromium creates one, and with no explicit-sync
-    * protocol on the compositor it tries to hand it over implicitly, by pushing
-    * it into the dma-buf with DMA_BUF_IOCTL_IMPORT_SYNC_FILE
-    * (wayland_buffer_manager_host.cc:459). That ioctl cannot work here -- the fd
-    * is a D3D12 shared handle, not a dma-buf -- and Chromium only logs the
-    * failure and commits anyway (wayland_surface.cc:520, the kDMAFence case has
-    * no CPU-wait fallback). So the compositor still gets no fence, and mutter is
-    * free to sample a frame that is still being drawn. A static page commits
-    * once, so the stale frame stays up until some unrelated repaint re-samples
-    * the buffer. Blocking here is what actually holds the frame back.
+    * Blocking here is what holds the frame back for a client that cannot say
+    * "wait for this" any other way -- which is most of them, since the usual
+    * channel is the dma-buf's own implicit fence, and ours carries none.
+    *
+    * A client doing explicit synchronization does not need it. With the dxgdrm
+    * node present, d3d12 fences export as real sync_files, mutter advertises
+    * linux-drm-syncobj-v1, and Chromium hands its acquire fence over the
+    * protocol (SyncMethod::kSyncobj) instead of trying to stuff it into the
+    * buffer with DMA_BUF_IOCTL_IMPORT_SYNC_FILE, which cannot work on a D3D12
+    * shared handle. The compositor then waits on the fence itself and stalling
+    * here buys nothing but latency. exports_fence_fds is the signal: a screen
+    * that has handed out a fence fd belongs to such a client.
     *
     * This has to sit here rather than in d3d12_flush(): pipe_context::flush is
     * only one of the ways a command list reaches the queue, and measurement
@@ -191,7 +192,8 @@ d3d12_flush_cmdlist(struct d3d12_context *ctx)
     * Batches that only read exported resources -- a compositor sampling its
     * clients -- do not pay for this.
     */
-   if (batch->wrote_exported)
+   if (batch->wrote_exported &&
+       !d3d12_screen(ctx->base.screen)->exports_fence_fds)
       d3d12_fence_finish(batch->fence, OS_TIMEOUT_INFINITE);
 
    ctx->current_batch_idx++;
