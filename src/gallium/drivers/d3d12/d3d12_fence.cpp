@@ -23,6 +23,11 @@
 
 #include "d3d12_fence.h"
 
+#ifndef _WIN32
+#include <xf86drm.h>
+#include "drm-uapi/dxgdrm_drm.h"
+#endif
+
 #include "d3d12_context.h"
 #include "d3d12_screen.h"
 
@@ -265,6 +270,25 @@ fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
 
    if (!fence->foreign_fd && !d3d12_fence_ensure_event_registered(fence))
       return -1;
+
+   /* Hand out a real sync_file when the dxgdrm node is there to mint one. A
+    * dup of the eventfd polls identically, but that is where the resemblance
+    * stops: it fails SYNC_IOC_FILE_INFO, and drm_syncobj refuses to import it,
+    * which is fatal rather than merely lossy -- Chromium's explicit-sync path
+    * discards the frame when the import fails (wayland_surface.cc:444). */
+   struct d3d12_screen *screen = d3d12_screen(pscreen);
+   screen->exports_fence_fds = true;
+
+   if (screen->dxgdrm_fd >= 0) {
+      struct drm_dxgdrm_fence_from_eventfd args = {};
+      args.eventfd = fence->event_fd;
+      args.fd = -1;
+
+      if (drmIoctl(screen->dxgdrm_fd, DRM_IOCTL_DXGDRM_FENCE_FROM_EVENTFD,
+                   &args) == 0)
+         return args.fd;
+      /* Fall through: an eventfd is still better than no fence at all. */
+   }
 
    return os_dupfd_cloexec(fence->event_fd);
 }
