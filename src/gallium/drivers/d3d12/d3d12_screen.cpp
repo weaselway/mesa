@@ -564,7 +564,11 @@ d3d12_is_format_supported(struct pipe_screen *pscreen,
       UNREACHABLE("Unknown target");
    }
 
-   if (bind & PIPE_BIND_DISPLAY_TARGET) {
+   /* Without a sw winsys there is no display target to be compatible with --
+    * this screen presents by exporting dma-bufs -- so let the D3D12 checks
+    * below decide on their own. Asking the null winsys instead would reject
+    * every format and leave the screen with no GL configs at all. */
+   if ((bind & PIPE_BIND_DISPLAY_TARGET) && screen->winsys) {
       enum pipe_format dt_format = format == PIPE_FORMAT_R16G16B16A16_FLOAT ? PIPE_FORMAT_R8G8B8A8_UNORM : format;
       if (!screen->winsys->is_displaytarget_format_supported(screen->winsys, bind, dt_format))
          return false;
@@ -1254,10 +1258,16 @@ d3d12_screen_get_fd(struct pipe_screen *pscreen)
    struct d3d12_screen *screen = d3d12_screen(pscreen);
    struct sw_winsys *winsys = screen->winsys;
 
-   if (winsys->get_fd)
-      return winsys->get_fd(winsys);
-   else
-      return -1;
+   if (winsys)
+      return winsys->get_fd ? winsys->get_fd(winsys) : -1;
+
+#ifndef _WIN32
+   /* Loaded against a DRM node rather than a sw winsys: the dxgdrm node is the
+    * fd that identifies this device. */
+   return screen->dxgdrm_fd;
+#else
+   return -1;
+#endif
 }
 
 #ifdef _WIN32
