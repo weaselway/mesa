@@ -482,6 +482,36 @@ DRM_DRIVER_DESCRIPTOR(ethosu, NULL, 0)
 DRM_DRIVER_DESCRIPTOR_STUB(ethosu)
 #endif
 
+#ifdef GALLIUM_D3D12
+#include "d3d12/d3d12_public.h"
+
+/* WSL: the GPU is reached through /dev/dxg, not through this fd. The dxgdrm
+ * node allocates nothing -- it exists to be identified and to carry syncobjs
+ * (see d3d12_screen.cpp:d3d12_open_dxgdrm_node) -- so the fd is deliberately
+ * unused here. Claiming the node matters anyway: without a descriptor for it
+ * the pipe loader falls back to kmsro, that fallback fails, and EGL quietly
+ * demotes the display to a software device. Anything downstream then sees
+ * EGL_MESA_device_software and concludes there is no GPU -- which is what made
+ * Firefox report FEATURE_FAILURE_NO_DRM_DEVICE and refuse to accelerate.
+ *
+ * NULL winsys because nothing scans out of this device: buffers reach the
+ * compositor as dma-bufs, not as sw_winsys display targets. d3d12 already
+ * treats a missing winsys as "no display target indirection" (see
+ * d3d12_resource.cpp:init_texture).
+ */
+static struct pipe_screen *
+pipe_dxgdrm_create_screen(UNUSED int fd, UNUSED const struct pipe_screen_config *config)
+{
+   struct pipe_screen *screen = d3d12_create_dxcore_screen(NULL, NULL);
+   return screen ? debug_screen_wrap(screen) : NULL;
+}
+
+DRM_DRIVER_DESCRIPTOR(dxgdrm, NULL, 0)
+
+#else
+DRM_DRIVER_DESCRIPTOR_STUB(dxgdrm)
+#endif
+
 #ifdef GALLIUM_KMSRO
 #include "kmsro/drm/kmsro_drm_public.h"
 
