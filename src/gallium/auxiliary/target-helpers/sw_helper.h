@@ -87,11 +87,19 @@ sw_screen_create_vk(struct sw_winsys *winsys, const struct pipe_screen_config *c
    };
 
    for (unsigned i = 0; i < ARRAY_SIZE(drivers); i++) {
+      /* Empty entries are placeholders for options this build or this call has
+       * disabled. Skip them: sw_screen_create_named() treats an empty name as
+       * "the default", which is llvmpipe, so passing one through would shadow
+       * every explicit entry after it -- including d3d12, leaving it reachable
+       * only by setting GALLIUM_DRIVER by hand. */
+      if (!drivers[i][0])
+         continue;
+
       struct pipe_screen *screen = sw_screen_create_named(winsys, config, drivers[i]);
       if (screen)
          return screen;
       /* If the env var is set, don't keep trying things */
-      else if (i == 0 && drivers[i][0] != '\0')
+      else if (i == 0)
          return NULL;
    }
    return NULL;
