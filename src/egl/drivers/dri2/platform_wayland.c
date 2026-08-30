@@ -63,6 +63,15 @@
 #include <wayland-client.h>
 #include <wayland-egl-backend.h>
 
+#include "util/os_time.h"
+#include "util/timespec.h"
+
+/* How long a swap will wait for the compositor's frame callback before giving
+ * up on being throttled by it. Long enough that a compositor merely running
+ * late still paces us, short enough that a surface which will never be
+ * presented does not wedge the client. */
+#define THROTTLE_TIMEOUT_NSEC (1000000000ull)
+
 /*
  * The index of entries in this table is used as a bitmask in
  * dri2_dpy->formats.formats_bitmap, which tracks the formats supported
@@ -1814,12 +1823,36 @@ static int
 throttle(struct dri2_egl_display *dri2_dpy,
          struct dri2_egl_surface *dri2_surf)
 {
+   struct timespec end_time;
+
    MESA_TRACE_FUNC();
 
-   while (dri2_surf->throttle_callback != NULL)
-      if (loader_wayland_dispatch(dri2_dpy->wl_dpy, dri2_surf->wl_queue, NULL) ==
-          -1)
+   /* Bounded wait. A surface that is not being presented never gets a frame
+    * callback at all -- a subsurface whose parent has not been mapped yet, for
+    * one -- and waiting for it forever deadlocks any client that maps its
+    * window from the same thread it renders on. Firefox does exactly that: its
+    * GTK main thread blocks on the renderer from inside a draw handler, while
+    * the renderer sits here waiting on a callback that only the main thread can
+    * unblock by mapping the parent.
+    *
+    * Giving up costs nothing but the pacing this throttle exists to provide,
+    * and only for frames the compositor was not pacing in the first place.
+    */
+   timespec_from_nsec(&end_time,
+                      os_time_get_nano() + THROTTLE_TIMEOUT_NSEC);
+
+   while (dri2_surf->throttle_callback != NULL) {
+      int ret = loader_wayland_dispatch(dri2_dpy->wl_dpy, dri2_surf->wl_queue,
+                                        &end_time);
+      if (ret == -1)
          return -1;
+
+      if (ret == 0 && os_time_get_nano() >= timespec_to_nsec(&end_time)) {
+         wl_callback_destroy(dri2_surf->throttle_callback);
+         dri2_surf->throttle_callback = NULL;
+         break;
+      }
+   }
 
    return 0;
 }
