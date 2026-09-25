@@ -47,6 +47,7 @@
 #include "d3d12_residency.h"
 #include "d3d12_resource.h"
 #include "pipebuffer/pb_bufmgr.h"
+#include "util/os_file.h"
 #include "util/u_debug.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
@@ -1437,7 +1438,10 @@ static int
 d3d12_open_dxgdrm_node(void)
 {
    drmDevicePtr devices[8];
-   int num_devs = drmGetDevices2(0, devices, ARRAY_SIZE(devices));
+   /* drmGetDevices2() returns the total count, which can exceed what it
+    * stored. */
+   int num_devs = MIN2(drmGetDevices2(0, devices, ARRAY_SIZE(devices)),
+                       (int)ARRAY_SIZE(devices));
    int fd = -1;
 
    for (int i = 0; i < num_devs && fd < 0; i++) {
@@ -1464,6 +1468,17 @@ d3d12_open_dxgdrm_node(void)
 
    return fd;
 }
+
+/* Use the dxgdrm node the pipe loader already opened (fd >= 0), or look for
+ * one. The screen owns a dup, so the loader can close its fd whenever. */
+void
+d3d12_screen_init_dxgdrm(struct d3d12_screen *screen, int fd)
+{
+   if (fd >= 0)
+      screen->dxgdrm_fd = os_dupfd_cloexec(fd);
+   else
+      screen->dxgdrm_fd = d3d12_open_dxgdrm_node();
+}
 #endif
 
 bool
@@ -1476,7 +1491,8 @@ d3d12_init_screen_base(struct d3d12_screen *screen, struct sw_winsys *winsys, LU
 
    screen->winsys = winsys;
 #ifndef _WIN32
-   screen->dxgdrm_fd = d3d12_open_dxgdrm_node();
+   /* Set by d3d12_screen_init_dxgdrm() */
+   screen->dxgdrm_fd = -1;
 #endif
    if (adapter_luid)
       screen->adapter_luid = *adapter_luid;
