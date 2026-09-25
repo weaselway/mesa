@@ -31,6 +31,7 @@
 #include "d3d12_context.h"
 #include "d3d12_screen.h"
 
+#include "util/u_atomic.h"
 #include "util/os_file.h"
 #include "util/u_memory.h"
 
@@ -277,7 +278,6 @@ fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
     * which is fatal rather than merely lossy -- Chromium's explicit-sync path
     * discards the frame when the import fails (wayland_surface.cc:444). */
    struct d3d12_screen *screen = d3d12_screen(pscreen);
-   screen->exports_fence_fds = true;
 
    if (screen->dxgdrm_fd >= 0) {
       struct drm_dxgdrm_fence_from_eventfd args = {};
@@ -285,8 +285,13 @@ fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
       args.fd = -1;
 
       if (drmIoctl(screen->dxgdrm_fd, DRM_IOCTL_DXGDRM_FENCE_FROM_EVENTFD,
-                   &args) == 0)
+                   &args) == 0) {
+         /* Only a real sync_file lets the compositor wait on the fence; an
+          * eventfd dup can't be imported, so the frame-end stall in
+          * d3d12_flush_cmdlist() must stay on for the fallback below. */
+         p_atomic_set(&screen->exports_fence_fds, true);
          return args.fd;
+      }
       /* Fall through: an eventfd is still better than no fence at all. */
    }
 
