@@ -194,13 +194,15 @@ init_buffer(struct d3d12_screen *screen,
    buf_desc.alignment = D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT;
    res->dxgi_format = DXGI_FORMAT_UNKNOWN;
 
-   /* Hand back whatever the GPU has finished with before asking for more. This
-    * used to happen inside d3d12_bo_new(), but that runs with pipebuffer's
-    * allocator lock held and is no longer allowed to free anything (see
-    * d3d12_allocating_depth in d3d12_bufmgr.cpp). Here no such lock is held. */
+   /* Hand back whatever the GPU has finished with before asking for more, and
+    * on failure wait for in-flight frees and retry. This can't live in
+    * d3d12_bo_new(): that runs with pipebuffer's allocator lock held and must
+    * not free anything (see there). Here no such lock is held. */
    d3d12_screen_reclaim_completed(screen);
 
-   buf = bufmgr->create_buffer(bufmgr, templ->width0, &buf_desc);
+   do {
+      buf = bufmgr->create_buffer(bufmgr, templ->width0, &buf_desc);
+   } while (!buf && d3d12_screen_reclaim_one(screen));
    if (!buf)
       return false;
    res->bo = d3d12_bo_wrap_buffer(screen, buf);
