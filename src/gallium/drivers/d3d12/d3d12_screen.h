@@ -215,6 +215,11 @@ d3d12_dxcore_screen(struct d3d12_screen *screen)
 bool
 d3d12_init_screen_base(struct d3d12_screen *screen, struct sw_winsys *winsys, LUID *adapter_luid);
 
+#ifndef _WIN32
+void
+d3d12_screen_init_dxgdrm(struct d3d12_screen *screen, int fd);
+#endif
+
 bool
 d3d12_init_screen(struct d3d12_screen *screen, IUnknown *adapter);
 
