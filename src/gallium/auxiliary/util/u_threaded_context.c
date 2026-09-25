@@ -4573,11 +4573,21 @@ tc_resource_copy_region(struct pipe_context *_pipe,
    if (dst->target == PIPE_BUFFER) {
       struct tc_buffer_list *next = &tc->buffer_lists[tc->next_buf_list];
 
-      tc_add_to_buffer_list(next, src);
+      unsigned size = src_box->width;
+
+      /* A texture source (see caps.texture_to_buffer_copy_row_alignment)
+       * writes tightly packed rows, and src_box->width is in pixels. */
+      if (src->target != PIPE_BUFFER) {
+         size = util_format_get_stride(src->format, src_box->width) *
+                util_format_get_nblocksy(src->format, src_box->height) *
+                src_box->depth;
+      } else {
+         tc_add_to_buffer_list(next, src);
+      }
       tc_add_to_buffer_list(next, dst);
 
       util_range_add(&tdst->b, &tdst->valid_buffer_range,
-                     dstx, dstx + src_box->width);
+                     dstx, dstx + size);
    }
 }
 
