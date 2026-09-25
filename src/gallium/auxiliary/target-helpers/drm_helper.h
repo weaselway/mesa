@@ -485,8 +485,9 @@ DRM_DRIVER_DESCRIPTOR_STUB(ethosu)
 
 /* WSL: the GPU is reached through /dev/dxg, not through this fd. The dxgdrm
  * node allocates nothing -- it exists to be identified and to carry syncobjs
- * (see d3d12_screen.cpp:d3d12_open_dxgdrm_node) -- so the fd is deliberately
- * unused here. Claiming the node matters anyway: without a descriptor for it
+ * (see d3d12_screen.cpp:d3d12_open_dxgdrm_node) -- so the screen only keeps a
+ * dup of it for exporting fences, instead of scanning for the node again.
+ * Claiming the node matters anyway: without a descriptor for it
  * the pipe loader falls back to kmsro, that fallback fails, and EGL quietly
  * demotes the display to a software device. Anything downstream then sees
  * EGL_MESA_device_software and concludes there is no GPU -- which is what made
@@ -498,9 +499,9 @@ DRM_DRIVER_DESCRIPTOR_STUB(ethosu)
  * d3d12_resource.cpp:init_texture).
  */
 static struct pipe_screen *
-pipe_dxgdrm_create_screen(UNUSED int fd, UNUSED const struct pipe_screen_config *config)
+pipe_dxgdrm_create_screen(int fd, UNUSED const struct pipe_screen_config *config)
 {
-   struct pipe_screen *screen = d3d12_create_dxcore_screen(NULL, NULL);
+   struct pipe_screen *screen = d3d12_create_dxcore_screen_drm(fd);
    return screen ? debug_screen_wrap(screen) : NULL;
 }
 
