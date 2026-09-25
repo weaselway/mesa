@@ -21,6 +21,7 @@
  * IN THE SOFTWARE.
  */
 
+#include "d3d12_blit.h"
 #include "d3d12_context.h"
 #include "d3d12_debug.h"
 #include "d3d12_format.h"
@@ -29,6 +30,7 @@
 #include "d3d12_screen.h"
 
 #include "util/u_blitter.h"
+#include "util/u_inlines.h"
 #include "util/format/u_format.h"
 
 static void
@@ -274,6 +276,70 @@ copy_resource_y_flipped_no_barriers(struct d3d12_context *ctx,
    }
 }
 
+static uint64_t
+texture_to_buffer_copy_size(struct d3d12_resource *src,
+                            const struct pipe_box *psrc_box)
+{
+   enum pipe_format format = src->base.b.format;
+
+   return (uint64_t)util_format_get_stride(format, psrc_box->width) *
+          util_format_get_nblocksy(format, psrc_box->height) *
+          psrc_box->depth;
+}
+
+/* A PLACED_FOOTPRINT must also start on a
+ * D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT (512) boundary, which callers of
+ * texture_to_buffer_copy_row_alignment (256) don't guarantee, and which also
+ * depends on where the buffer was suballocated. When the destination doesn't
+ * satisfy it, copy into an aligned temporary buffer and from there into the
+ * destination with a plain CopyBufferRegion. */
+static bool
+texture_to_buffer_needs_staging(struct d3d12_resource *dst,
+                                uint64_t dst_offset)
+{
+   uint64_t dst_res_offset = 0;
+
+   d3d12_resource_underlying(dst, &dst_res_offset);
+   return (dst_res_offset + dst_offset) %
+          D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0;
+}
+
+static void
+copy_texture_to_buffer_staged(struct d3d12_context *ctx,
+                              struct d3d12_resource *dst,
+                              const struct pipe_box *pdst_box,
+                              struct d3d12_resource *src,
+                              unsigned src_level,
+                              const struct pipe_box *psrc_box,
+                              unsigned mask)
+{
+   uint64_t size = texture_to_buffer_copy_size(src, psrc_box);
+   uint64_t tmp_res_offset = 0;
+   struct pipe_resource *tmp;
+   struct pipe_box tmp_box;
+
+   tmp = pipe_buffer_create(ctx->base.screen, 0, PIPE_USAGE_DEFAULT,
+                            size + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+   if (!tmp) {
+      mesa_loge("d3d12: failed to allocate texture -> buffer staging");
+      return;
+   }
+
+   d3d12_resource_underlying(d3d12_resource(tmp), &tmp_res_offset);
+   u_box_1d((D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT -
+             tmp_res_offset % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT) %
+            D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT,
+            size, &tmp_box);
+
+   d3d12_direct_copy(ctx, d3d12_resource(tmp), 0, &tmp_box,
+                     src, src_level, psrc_box, mask);
+   d3d12_direct_copy(ctx, dst, 0, pdst_box,
+                     d3d12_resource(tmp), 0, &tmp_box, mask);
+
+   /* The batch holds its own reference until the copy has executed. */
+   pipe_resource_reference(&tmp, NULL);
+}
+
 void
 d3d12_direct_copy(struct d3d12_context *ctx,
                   struct d3d12_resource *dst,
@@ -285,6 +351,14 @@ d3d12_direct_copy(struct d3d12_context *ctx,
                   unsigned mask)
 {
    struct d3d12_batch *batch = d3d12_current_batch(ctx);
+
+   if (dst->base.b.target == PIPE_BUFFER &&
+       src->base.b.target != PIPE_BUFFER &&
+       texture_to_buffer_needs_staging(dst, pdst_box->x)) {
+      copy_texture_to_buffer_staged(ctx, dst, pdst_box,
+                                    src, src_level, psrc_box, mask);
+      return;
+   }
 
    unsigned src_subres = get_subresource_id(src->base.b.target, src_level, src->base.b.last_level + 1,
                                             psrc_box->z, nullptr, src->base.b.array_size, src->plane_slice);
@@ -315,11 +389,17 @@ d3d12_direct_copy(struct d3d12_context *ctx,
    if (src->base.b.target == PIPE_BUFFER) {
       copy_buffer_region_no_barriers(ctx, dst, pdst_box->x,
                                      src, psrc_box->x, psrc_box->width);
+      util_range_add(&dst->base.b, &dst->valid_buffer_range,
+                     pdst_box->x, pdst_box->x + psrc_box->width);
    } else if (dst->base.b.target == PIPE_BUFFER) {
       /* Texture -> buffer. pdst_box->x is a byte offset, as for the
        * buffer -> buffer case above. */
       copy_texture_to_buffer_no_barriers(ctx, dst, pdst_box->x,
                                          src, src_level, psrc_box);
+      /* Keeps a later write map of this range from being treated as
+       * unsynchronized while the copy is still in flight. */
+      util_range_add(&dst->base.b, &dst->valid_buffer_range, pdst_box->x,
+                     pdst_box->x + texture_to_buffer_copy_size(src, psrc_box));
    } else if (psrc_box->height == pdst_box->height) {
       /* No flipping, we can forward this directly to resource_copy_region */
       copy_subregion_no_barriers(ctx, dst, dst_level,
