@@ -1086,8 +1086,9 @@ struct pipe_caps {
     * A driver setting this promises that resource_copy_region() accepts a
     * PIPE_BUFFER destination with a non-buffer source, treating dst_box->x as a
     * byte offset, provided the source region's row stride is a multiple of this
-    * value. It must not silently pad rows to reach the alignment: the caller
-    * owns the destination layout. */
+    * value and dst_box->x is a multiple of it too. Any stricter start-offset
+    * alignment the hardware has is the driver's problem. It must not silently
+    * pad rows to reach the alignment: the caller owns the destination layout. */
    unsigned texture_to_buffer_copy_row_alignment;
    unsigned linear_image_pitch_alignment;
    unsigned linear_image_base_address_alignment;
