@@ -231,8 +231,8 @@ d3d12_init_dxcore_screen(struct d3d12_screen *dscreen)
    return true;
 }
 
-struct pipe_screen *
-d3d12_create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid)
+static struct pipe_screen *
+create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid, int dxgdrm_fd)
 {
    struct d3d12_dxcore_screen *screen = CALLOC_STRUCT(d3d12_dxcore_screen);
    if (!screen)
@@ -242,6 +242,9 @@ d3d12_create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid)
       d3d12_destroy_screen(&screen->base);
       return nullptr;
    }
+#ifndef _WIN32
+   d3d12_screen_init_dxgdrm(&screen->base, dxgdrm_fd);
+#endif
    screen->base.base.destroy = d3d12_destroy_dxcore_screen;
    screen->base.init = d3d12_init_dxcore_screen;
    screen->base.deinit = d3d12_deinit_dxcore_screen;
@@ -253,6 +256,20 @@ d3d12_create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid)
 
    return &screen->base.base;
 }
+
+struct pipe_screen *
+d3d12_create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid)
+{
+   return create_dxcore_screen(winsys, adapter_luid, -1);
+}
+
+#ifndef _WIN32
+struct pipe_screen *
+d3d12_create_dxcore_screen_drm(int dxgdrm_fd)
+{
+   return create_dxcore_screen(NULL, NULL, dxgdrm_fd);
+}
+#endif
 
 struct pipe_screen *
 d3d12_create_dxcore_screen_from_d3d12_device(struct sw_winsys *winsys, IUnknown* pDevUnk, LUID **out_adapter_luid)
@@ -271,6 +288,9 @@ d3d12_create_dxcore_screen_from_d3d12_device(struct sw_winsys *winsys, IUnknown*
       d3d12_destroy_screen(&screen->base);
       return nullptr;
    }
+#ifndef _WIN32
+   d3d12_screen_init_dxgdrm(&screen->base, -1);
+#endif
    screen->base.base.destroy = d3d12_destroy_dxcore_screen;
    screen->base.init = d3d12_init_dxcore_screen;
    screen->base.deinit = d3d12_deinit_dxcore_screen;
