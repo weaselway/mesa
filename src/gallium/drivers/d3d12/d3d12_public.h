@@ -48,6 +48,12 @@ d3d12_create_dxcore_screen_from_d3d12_device(struct sw_winsys *winsys, IUnknown*
 struct pipe_screen *
 d3d12_create_dxcore_screen(struct sw_winsys *winsys, LUID *adapter_luid);
 
+#ifndef _WIN32
+/* For the pipe loader's dxgdrm descriptor: fd is the dxgdrm render node. */
+struct pipe_screen *
+d3d12_create_dxcore_screen_drm(int dxgdrm_fd);
+#endif
+
 #ifdef __cplusplus
 }
 #endif
