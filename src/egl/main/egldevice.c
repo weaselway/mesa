@@ -27,13 +27,18 @@
 
 #ifdef HAVE_LIBDRM
 #include <fcntl.h>
+#include <limits.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <xf86drm.h>
 #endif
 #include "util/compiler.h"
 #include "util/macros.h"
 #include "util/u_call_once.h"
+#include "util/os_misc.h"
 #include "util/u_debug.h"
 
 #include "eglcurrent.h"
@@ -256,11 +261,48 @@ out:
  */
 static const char *_egl_software_render_node;
 
+/* Whether the render node at path belongs to the dxgdrm driver. Asks sysfs
+ * rather than opening the node, so other GPUs' nodes are never touched. */
+static bool
+_eglIsDxgdrmNode(const char *path)
+{
+   struct stat st;
+   char link[PATH_MAX], target[PATH_MAX];
+   ssize_t len;
+
+   if (stat(path, &st) != 0 || !S_ISCHR(st.st_mode))
+      return false;
+
+   snprintf(link, sizeof(link), "/sys/dev/char/%u:%u/device/driver",
+            major(st.st_rdev), minor(st.st_rdev));
+   len = readlink(link, target, sizeof(target) - 1);
+   if (len < 0)
+      return false;
+   target[len] = '\0';
+
+   const char *name = strrchr(target, '/');
+   return !strcmp(name ? name + 1 : target, "dxgdrm");
+}
+
 static void
 _eglInitSoftwareRenderNode(void)
 {
    drmDevicePtr devices[64];
-   int num_devs = drmGetDevices2(0, devices, ARRAY_SIZE(devices));
+   int num_devs;
+
+   /* Only the d3d12 driver is served by dxgdrm; llvmpipe/softpipe are real
+    * software devices and must not claim a render node. d3d12 needs /dev/dxg,
+    * and is skipped when a software rasterizer is forced. */
+   const char *gallium_driver = os_get_option("GALLIUM_DRIVER");
+   if (access("/dev/dxg", F_OK) != 0 ||
+       debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false) ||
+       (gallium_driver && strcmp(gallium_driver, "d3d12") != 0))
+      return;
+
+   /* drmGetDevices2() returns the total count, which can exceed what it
+    * stored. */
+   num_devs = MIN2(drmGetDevices2(0, devices, ARRAY_SIZE(devices)),
+                   (int)ARRAY_SIZE(devices));
 
    for (int i = 0; i < num_devs; i++) {
       if (_egl_software_render_node ||
@@ -268,17 +310,8 @@ _eglInitSoftwareRenderNode(void)
          continue;
 
       const char *path = devices[i]->nodes[DRM_NODE_RENDER];
-      int fd = open(path, O_RDWR | O_CLOEXEC);
-      if (fd < 0)
-         continue;
-
-      drmVersionPtr version = drmGetVersion(fd);
-      if (version) {
-         if (!strcmp(version->name, "dxgdrm"))
-            _egl_software_render_node = strdup(path);
-         drmFreeVersion(version);
-      }
-      close(fd);
+      if (_eglIsDxgdrmNode(path))
+         _egl_software_render_node = strdup(path);
    }
 
    if (num_devs > 0)
