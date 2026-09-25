@@ -162,7 +162,8 @@ struct d3d12_screen {
    bool supports_dynamic_queue_priority;
 
 #ifndef _WIN32
-   /* Set the first time this screen hands out a fence fd. A client taking
+   /* Set the first time this screen hands out a fence fd backed by a real
+    * sync_file (dxgdrm), atomically since any thread may export. A client taking
     * native fence fds is doing its frame-end synchronization explicitly, which
     * means the compositor gets a real acquire fence and d3d12_flush_cmdlist()
     * no longer has to stall on its behalf. Screens are per-process, so this
