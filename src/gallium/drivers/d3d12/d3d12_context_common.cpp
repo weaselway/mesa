@@ -192,8 +192,8 @@ d3d12_flush_cmdlist(struct d3d12_context *ctx)
     * Batches that only read exported resources -- a compositor sampling its
     * clients -- do not pay for this.
     */
-   if (batch->wrote_exported &&
-       !d3d12_screen(ctx->base.screen)->exports_fence_fds)
+   if (batch->wrote_exported && batch->fence &&
+       !p_atomic_read(&d3d12_screen(ctx->base.screen)->exports_fence_fds))
       d3d12_fence_finish(batch->fence, OS_TIMEOUT_INFINITE);
 
    ctx->current_batch_idx++;
