@@ -202,6 +202,11 @@ d3d12_flush_cmdlist(struct d3d12_context *ctx)
    if (batch->wrote_exported && batch->fence &&
        !p_atomic_read(&d3d12_screen(ctx->base.screen)->exports_fence_fds))
       d3d12_fence_finish(batch->fence, OS_TIMEOUT_INFINITE);
+   /* A framebuffer on the dxgdrm KMS node is different: a compositor that
+    * swaps and page-flips hands the kernel no fence, whatever it does with
+    * fence fds elsewhere, so exports_fence_fds says nothing about it. */
+   else if (batch->wrote_scanout && batch->fence)
+      d3d12_fence_finish(batch->fence, OS_TIMEOUT_INFINITE);
 
    ctx->current_batch_idx++;
    if (ctx->current_batch_idx == ARRAY_SIZE(ctx->batches))
