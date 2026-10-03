@@ -39,6 +39,11 @@
 #include "frontend/sw_winsys.h"
 
 #include <dxguids/dxguids.h>
+
+#ifndef _WIN32
+#include <unistd.h>
+#include <xf86drm.h>
+#endif
 #include <memory>
 
 #ifndef _GAMING_XBOX
@@ -88,6 +93,10 @@ d3d12_resource_destroy(struct pipe_screen *pscreen,
 
    if (resource->dt_proxy)
       pipe_resource_reference(&resource->dt_proxy, NULL);
+#ifndef _WIN32
+   if (resource->kms_handle)
+      drmCloseBufferHandle(d3d12_screen(pscreen)->dxgdrm_fd, resource->kms_handle);
+#endif
    threaded_resource_deinit(presource);
    if (can_map_directly(presource))
       util_range_destroy(&resource->valid_buffer_range);
@@ -932,6 +941,50 @@ d3d12_resource_get_handle(struct pipe_screen *pscreen,
       handle->modifier = ~0ull;
       return true;
    }
+#ifndef _WIN32
+   case WINSYS_HANDLE_TYPE_KMS: {
+      /* What gbm_bo_get_handle() returns, and what a compositor that renders
+       * to a gbm_surface (mutter) passes to drmModeAddFB2(). The dxgdrm node
+       * takes a shared handle through PRIME import and wraps it in a GEM
+       * object, which is all a framebuffer there needs to be: the presenter
+       * gets the shared handle back and opens it on its own device. */
+      if (!screen->dxgdrm_is_kms)
+         return false;
+
+      if (!res->kms_handle) {
+         HANDLE d3d_handle = nullptr;
+
+         screen->dev->CreateSharedHandle(d3d12_resource_resource(res),
+                                         nullptr,
+                                         GENERIC_ALL,
+                                         nullptr,
+                                         &d3d_handle);
+         if (!d3d_handle)
+            return false;
+
+         int fd = (int)(intptr_t)d3d_handle;
+         uint32_t kms_handle = 0;
+         int ret = drmPrimeFDToHandle(screen->dxgdrm_fd, fd, &kms_handle);
+         /* The GEM object keeps the shared handle alive from here on. */
+         close(fd);
+         if (ret)
+            return false;
+
+         res->kms_handle = kms_handle;
+         if (res->bo) {
+            res->bo->exported = true;
+            res->bo->scanout = true;
+         }
+      }
+
+      handle->handle = res->kms_handle;
+      handle->stride = util_format_get_stride(pres->format, pres->width0);
+      handle->offset = 0;
+      handle->format = pres->format;
+      handle->modifier = ~0ull;
+      return true;
+   }
+#endif
    default:
       return false;
    }

@@ -49,6 +49,9 @@ struct d3d12_resource {
    struct pipe_resource* first_plane;
    unsigned mip_levels;
 
+   /* GEM handle on the dxgdrm KMS node, or 0. See d3d12_resource_get_handle(). */
+   uint32_t kms_handle;
+
    struct sw_displaytarget *dt;
    unsigned dt_refcount; /* For planar resources sharing the dt pointer */
    unsigned dt_stride;

@@ -175,6 +175,12 @@ struct d3d12_screen {
     * at screen creation, because that is before Chromium's GPU sandbox closes --
     * the same reason /dev/dxg is opened this early. */
    int dxgdrm_fd;
+
+   /* Whether dxgdrm_fd is the fd this screen was created for and is the
+    * primary (KMS) node. Only then do GEM handles made on it mean anything to
+    * the caller: gbm hands them out as gbm_bo_get_handle(), which a compositor
+    * passes to drmModeAddFB2() on that same fd. */
+   bool dxgdrm_is_kms;
 #endif
 
 #ifdef _GAMING_XBOX

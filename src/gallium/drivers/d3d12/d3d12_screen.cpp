@@ -1470,10 +1470,15 @@ d3d12_open_dxgdrm_node(void)
 void
 d3d12_screen_init_dxgdrm(struct d3d12_screen *screen, int fd)
 {
-   if (fd >= 0)
+   if (fd >= 0) {
+      /* A dup shares the open file description, and with it the GEM handle
+       * namespace of the caller's fd. */
       screen->dxgdrm_fd = os_dupfd_cloexec(fd);
-   else
+      screen->dxgdrm_is_kms = screen->dxgdrm_fd >= 0 &&
+                              drmGetNodeTypeFromFd(screen->dxgdrm_fd) == DRM_NODE_PRIMARY;
+   } else {
       screen->dxgdrm_fd = d3d12_open_dxgdrm_node();
+   }
 }
 #endif
 

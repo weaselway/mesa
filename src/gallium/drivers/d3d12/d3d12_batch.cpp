@@ -255,6 +255,7 @@ d3d12_start_batch(struct d3d12_context *ctx, struct d3d12_batch *batch)
    d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);
 
    batch->wrote_exported = false;
+   batch->wrote_scanout = false;
 
    /* Create or reset global command list */
    if (ctx->cmdlist) {
@@ -494,6 +495,8 @@ d3d12_batch_reference_resource(struct d3d12_batch *batch,
 
    if (write && res->bo && res->bo->exported)
       batch->wrote_exported = true;
+   if (write && res->bo && res->bo->scanout)
+      batch->wrote_scanout = true;
 }
 
 void
