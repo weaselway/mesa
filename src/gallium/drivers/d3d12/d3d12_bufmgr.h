@@ -68,6 +68,12 @@ struct d3d12_bo {
     * d3d12_bo_wrap_res(), which is why this sits before local_context_states. */
    bool exported;
 
+   /* Set once the resource has a GEM handle on the dxgdrm KMS node, i.e. it is
+    * (or can become) a framebuffer there. Whoever presents it reads it from
+    * another process and gets no fence from a compositor that just page-flips,
+    * so writes to it are always waited out. See d3d12_flush_cmdlist(). */
+   bool scanout;
+
 #ifndef NDEBUG
    bool is_front_buffer;
 #endif
