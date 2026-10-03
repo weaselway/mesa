@@ -67,6 +67,8 @@ struct d3d12_batch {
 
    /* Whether this batch wrote to a resource another process can see. */
    bool wrote_exported;
+   /* Whether it wrote to a dxgdrm framebuffer, see d3d12_bo::scanout. */
+   bool wrote_scanout;
 
    uint64_t submit_id;
    uint32_t ctx_id, ctx_index;
