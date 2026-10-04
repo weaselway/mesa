@@ -16,7 +16,7 @@ fi
 BUILD_DIR="${BUILD_DIR:-${SOURCE_DIR}/build/nix}"
 BUILDTYPE="${BUILDTYPE:-release}"
 
-# Same flags as weaselway/dev/build-mesa.sh, minus prefix/libdir (no install).
+# d3d12 and dzn with the software fallbacks; nothing is installed.
 MESON_FLAGS=(
     --buildtype="${BUILDTYPE}"
     -Dglvnd=enabled
