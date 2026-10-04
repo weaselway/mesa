@@ -43,6 +43,7 @@
 #ifndef _WIN32
 #include <unistd.h>
 #include <xf86drm.h>
+#include "drm-uapi/drm_fourcc.h"
 #endif
 #include <memory>
 
@@ -956,7 +957,11 @@ d3d12_resource_get_handle(struct pipe_screen *pscreen,
       handle->stride = util_format_get_stride(pres->format, pres->width0);
       handle->offset = 0;
       handle->format = pres->format;
-      handle->modifier = ~0ull;
+      /* Not ~0ull as in the fd case: this is also how gbm_bo_get_modifier()
+       * is answered, and anything but DRM_FORMAT_MOD_INVALID makes a
+       * compositor create its framebuffer with that as an explicit modifier,
+       * which the KMS node has no plane for. */
+      handle->modifier = DRM_FORMAT_MOD_INVALID;
       return true;
    }
 #endif
