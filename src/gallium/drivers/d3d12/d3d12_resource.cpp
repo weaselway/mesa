@@ -353,7 +353,17 @@ init_texture(struct d3d12_screen *screen,
     * CPU-readable layout, which a shared handle cannot serve anyway, and failing
     * the allocation beats handing back a buffer that lies about its layout.
     */
-   const unsigned row_major_binds = PIPE_BIND_LINEAR;
+   unsigned row_major_binds = PIPE_BIND_LINEAR;
+
+   /* On the dxgdrm KMS node a scanout buffer is only ever a framebuffer of the
+    * virtual display, and what reads it is the presenter, through the shared
+    * handle like every other importer -- so "linear" means nothing there
+    * either. It has to be accepted rather than refused: KWin assumes a cursor
+    * plane without IN_FORMATS takes only DRM_FORMAT_MOD_LINEAR, asks gbm for
+    * GBM_BO_USE_LINEAR, and on failure quietly draws the cursor into the frame
+    * instead of using the plane. */
+   if (screen->dxgdrm_is_kms && (templ->bind & PIPE_BIND_SCANOUT))
+      row_major_binds = 0;
 #endif
 
    if (templ->bind & row_major_binds)
