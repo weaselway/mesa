@@ -1,9 +1,9 @@
 # Building mesa for weaselway (Nix)
 
 A compile check for this fork, using the dev shell in [flake.nix](flake.nix)
-(nixpkgs `nixos-26.05`). Nothing is installed. Shipping packages come from
-`weaselway/ubuntu/resolute/build-mesa.sh`, and an install-over-the-distro dev
-build from `weaselway/dev/build-mesa.sh`.
+(nixpkgs `nixos-26.05`). Nothing is installed. What ships is built by the
+[weaselway](https://github.com/weaselway/weaselway) flake, from the release
+branch that matches nixpkgs' mesa (now `mesa-26.2.1-wsl`).
 
 ```sh
 ./weaselway-build.sh
@@ -16,13 +16,12 @@ itself when a `meson.build` changes.
 - `RECONFIGURE=1 ./weaselway-build.sh` re-applies the flags to an existing
   build dir, for example after editing them.
 - `BUILDTYPE=debugoptimized RECONFIGURE=1 ./weaselway-build.sh` switches the
-  build type (the default is `release`, as in the weaselway scripts).
+  build type (the default is `release`).
 - `rm -rf build/nix` starts from scratch.
 
 ## Flags
 
-These are the same as `weaselway/dev/build-mesa.sh`, without
-`prefix`/`libdir`. The list lives in [weaselway-build.sh](weaselway-build.sh).
+The list lives in [weaselway-build.sh](weaselway-build.sh).
 
 | Flag | Why |
 |---|---|
@@ -50,5 +49,6 @@ These are the same as `weaselway/dev/build-mesa.sh`, without
   a missing python module, check which `Program python3.X found` it chose.
 - On an aarch64 host this builds for arm64. The d3d12 code is
   architecture-independent, so the compile check still holds.
-- `weaselway/ubuntu/resolute/build-mesa.sh` packages the `mesa-26.0.8-wsl`
-  branch, not `main`. Check out whichever one you are changing.
+- The weaselway image builds a `mesa-X.Y.Z-wsl` release branch, not `main`.
+  `main` is the same commits on upstream main, ready for the next release
+  branch. Check out whichever one you are changing.
