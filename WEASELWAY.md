@@ -52,3 +52,4 @@ The list lives in [weaselway-build.sh](weaselway-build.sh).
 - The weaselway image builds a `mesa-X.Y.Z-wsl` release branch, not `main`.
   `main` is the same commits on upstream main, ready for the next release
   branch. Check out whichever one you are changing.
+- The decisions behind the changes are recorded in [wsl-adr](wsl-adr/README.md).
