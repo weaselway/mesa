@@ -139,6 +139,13 @@ d3d12_resource_wait_idle(struct d3d12_context *ctx,
 void
 d3d12_screen_resource_init(struct pipe_screen *pscreen);
 
+#ifndef _WIN32
+/* Only for a screen on the dxgdrm KMS node: other users take the hook as
+ * support for modifiers in general. */
+void
+d3d12_screen_resource_init_kms(struct pipe_screen *pscreen);
+#endif
+
 void
 d3d12_context_resource_init(struct pipe_context *pctx);
 

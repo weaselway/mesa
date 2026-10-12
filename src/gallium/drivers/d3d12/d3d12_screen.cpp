@@ -1480,6 +1480,8 @@ d3d12_screen_init_dxgdrm(struct d3d12_screen *screen, int fd)
       screen->dxgdrm_fd = os_dupfd_cloexec(fd);
       screen->dxgdrm_is_kms = screen->dxgdrm_fd >= 0 &&
                               drmGetNodeTypeFromFd(screen->dxgdrm_fd) == DRM_NODE_PRIMARY;
+      if (screen->dxgdrm_is_kms)
+         d3d12_screen_resource_init_kms(&screen->base);
    } else {
       screen->dxgdrm_fd = d3d12_open_dxgdrm_node();
    }

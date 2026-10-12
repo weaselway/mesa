@@ -1303,6 +1303,31 @@ d3d12_screen_resource_init(struct pipe_screen *pscreen)
    pscreen->resource_from_memobj = d3d12_resource_from_memobj;
 }
 
+#ifndef _WIN32
+/* An allocation with an explicit modifier, on the dxgdrm KMS node only: its
+ * planes take DRM_FORMAT_MOD_LINEAR, and the layout means nothing there, as
+ * only the presenter reads the buffer, through its shared handle (see the KMS
+ * handle in d3d12_resource_get_handle()). aquamarine asks for it for a cursor
+ * buffer, and without it reports no modifier and drops the buffer. */
+static struct pipe_resource *
+d3d12_resource_create_with_modifiers(struct pipe_screen *pscreen,
+                                     const struct pipe_resource *templ,
+                                     const uint64_t *modifiers, int count)
+{
+   for (int i = 0; i < count; i++) {
+      if (modifiers[i] == DRM_FORMAT_MOD_LINEAR)
+         return d3d12_resource_create(pscreen, templ);
+   }
+   return NULL;
+}
+
+void
+d3d12_screen_resource_init_kms(struct pipe_screen *pscreen)
+{
+   pscreen->resource_create_with_modifiers = d3d12_resource_create_with_modifiers;
+}
+#endif
+
 unsigned int
 get_subresource_id(struct d3d12_resource *res, unsigned resid,
                    unsigned z, unsigned base_level)
