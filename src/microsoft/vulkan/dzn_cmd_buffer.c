@@ -1794,6 +1794,13 @@ dzn_cmd_buffer_alloc_internal_buf(struct dzn_cmd_buffer *cmdbuf,
       alloc_size = ALIGN_POT(size, 64 * 1024);
 
    D3D12_HEAP_PROPERTIES hprops = dzn_ID3D12Device4_GetCustomHeapProperties(device->dev, 0, heap_type);
+#ifndef _WIN32
+   /* WSL maps write-combined memory at ~12 MB/s, write-back is fine on UMA. */
+   struct dzn_physical_device *pdev =
+      container_of(device->vk.physical, struct dzn_physical_device, vk);
+   if (heap_type == D3D12_HEAP_TYPE_UPLOAD && pdev->architecture.UMA)
+      hprops.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_WRITE_BACK;
+#endif
    D3D12_RESOURCE_DESC rdesc = {
       .Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
       .Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT,
