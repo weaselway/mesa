@@ -57,6 +57,10 @@ struct d3d12_resource {
    unsigned dt_stride;
    struct pipe_resource *dt_proxy;
 
+   /* Imported buffer this texture shows the top-left part of, copied in before
+    * each GPU read. See d3d12_refresh_sub_rect(). */
+   struct pipe_resource *sub_rect_src;
+
    struct util_range valid_buffer_range;
    uint32_t bind_counts[MESA_SHADER_STAGES][D3D12_RESOURCE_BINDING_TYPES];
    unsigned generation_id;
@@ -64,6 +68,10 @@ struct d3d12_resource {
    util_once_flag logicop_texture_init_flag;
    struct pipe_resource *logicop_texture;
 };
+
+struct d3d12_context;
+void
+d3d12_refresh_sub_rect(struct d3d12_context *ctx, struct d3d12_resource *res);
 
 struct d3d12_memory_object {
    struct pipe_memory_object base;
