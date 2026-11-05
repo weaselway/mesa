@@ -57,11 +57,14 @@ dzn_enumerate_physical_devices_dxcore(struct vk_instance *instance)
       return VK_ERROR_INITIALIZATION_FAILED;
    }
 
-   VkResult result = VK_SUCCESS;
+   /* An adapter the driver cannot use (no D3D12 device at feature level
+    * 11_0) is skipped, so it does not hide the others. Enumeration fails
+    * only if no adapter could be added, or on another error. */
    uint32_t adapter_count = list->GetAdapterCount();
+   VkResult result = adapter_count ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS;
    IDXCoreAdapter *adapter;
-   for (uint32_t i = 0; i < adapter_count && result == VK_SUCCESS; ++i) {
-      result = VK_ERROR_INITIALIZATION_FAILED;
+   for (uint32_t i = 0; i < adapter_count; ++i) {
+      VkResult adapter_result = VK_ERROR_INITIALIZATION_FAILED;
       if (SUCCEEDED(list->GetAdapter(i, IID_PPV_ARGS(&adapter)))) {
          dzn_physical_device_desc desc = { 0 };
          DXCoreHardwareID hardware_id;
@@ -74,17 +77,23 @@ dzn_enumerate_physical_devices_dxcore(struct vk_instance *instance)
              FAILED(adapter->GetProperty(DXCoreAdapterProperty::IsHardware, &is_hardware)) ||
              FAILED(adapter->GetProperty(DXCoreAdapterProperty::DriverDescription, sizeof(desc.description), desc.description))) {
             mesa_loge("Failed to retrieve DXCore adapter properties\n");
-            result = VK_ERROR_INITIALIZATION_FAILED;
          } else {
             desc.vendor_id = hardware_id.vendorID;
             desc.device_id = hardware_id.deviceID;
             desc.subsys_id = hardware_id.subSysID;
             desc.revision = hardware_id.revision;
             desc.is_warp = !is_hardware;
-            result = dzn_instance_add_physical_device(instance, adapter, &desc);
+            adapter_result = dzn_instance_add_physical_device(instance, adapter, &desc);
          }
 
          adapter->Release();
+      }
+
+      if (adapter_result == VK_SUCCESS) {
+         result = VK_SUCCESS;
+      } else if (adapter_result != VK_ERROR_INITIALIZATION_FAILED) {
+         result = adapter_result;
+         break;
       }
    }
 
