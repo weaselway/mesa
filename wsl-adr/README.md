@@ -26,6 +26,7 @@ module in dxgdrm's `docs/adr`. They are referred to as "weaselway NNNN" and
 | [0009](0009-async-readback-by-texture-to-buffer-copy.md) | `glReadPixels` into a PBO copies texture to buffer, asynchronously | Accepted |
 | [0010](0010-wayland-swaps-throttle-on-frame-callbacks.md) | Wayland swaps always wait for the frame callback, for at most a second | Accepted |
 | [0011](0011-opaque-10-bit-format.md) | The opaque 10-bit format borrows the A2 DXGI format | Accepted |
+| [0012](0012-context-priorities-through-a-got-hook.md) | GPU priorities are set on dxgkrnl contexts, through a GOT hook | Accepted |
 
 ## Known risks
 
@@ -48,5 +49,8 @@ Found while writing these records, details in the linked files:
 - The software device's render node is chosen from environment variables,
   not from the driver actually loaded
   ([0007](0007-software-device-reports-the-dxgdrm-node.md)).
+- GPU priorities rely on patching the GOT of `libd3d12core.so`, and stop
+  working (at the default priority) if a WSL update links it differently
+  ([0012](0012-context-priorities-through-a-got-hook.md)).
 - Each release branch is a separate rebase, and its commits can differ from
   those on `main` ([0001](0001-patch-stack-on-release-branches-and-main.md)).
