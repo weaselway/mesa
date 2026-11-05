@@ -880,6 +880,18 @@ update_draw_auto(struct d3d12_context *ctx,
    return true;
 }
 
+static void
+refresh_sub_rect_views(struct d3d12_context *ctx, unsigned first_stage, unsigned last_stage)
+{
+   for (unsigned stage = first_stage; stage <= last_stage; ++stage) {
+      for (unsigned i = 0; i < ctx->num_sampler_views[stage]; ++i) {
+         struct pipe_sampler_view *view = ctx->sampler_views[stage][i];
+         if (view && view->texture && d3d12_resource(view->texture)->sub_rect_src)
+            d3d12_refresh_sub_rect(ctx, d3d12_resource(view->texture));
+      }
+   }
+}
+
 void
 d3d12_draw_vbo(struct pipe_context *pctx,
                const struct pipe_draw_info *dinfo,
@@ -919,6 +931,8 @@ d3d12_draw_vbo(struct pipe_context *pctx,
       util_primconvert_draw_vbo(ctx->primconvert, dinfo, drawid_offset, indirect, draws, num_draws);
       return;
    }
+
+   refresh_sub_rect_views(ctx, 0, D3D12_GFX_SHADER_STAGES - 1);
 
    bool draw_auto = update_draw_auto(ctx, &indirect, &patched_indirect);
    bool indirect_with_sysvals = !draw_auto && update_draw_indirect_with_sysvals(ctx, dinfo, drawid_offset, &indirect, &patched_indirect);
@@ -1339,6 +1353,8 @@ d3d12_launch_grid(struct pipe_context *pctx, const struct pipe_grid_info *info)
    unsigned indirect_offset = info->indirect_offset;
    if (indirect && update_dispatch_indirect_with_sysvals(ctx, &indirect, &indirect_offset, &patched_indirect))
       cmd_sig_key.multi_draw_stride = sizeof(D3D12_DISPATCH_ARGUMENTS) * 2;
+
+   refresh_sub_rect_views(ctx, MESA_SHADER_COMPUTE, MESA_SHADER_COMPUTE);
 
    d3d12_select_compute_shader_variants(ctx, info);
    d3d12_validate_queries(ctx);

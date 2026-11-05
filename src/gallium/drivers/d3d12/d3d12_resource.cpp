@@ -94,6 +94,8 @@ d3d12_resource_destroy(struct pipe_screen *pscreen,
 
    if (resource->dt_proxy)
       pipe_resource_reference(&resource->dt_proxy, NULL);
+   if (resource->sub_rect_src)
+      pipe_resource_reference(&resource->sub_rect_src, NULL);
 #ifndef _WIN32
    if (resource->kms_handle)
       drmCloseBufferHandle(d3d12_screen(pscreen)->dxgdrm_fd, resource->kms_handle);
@@ -597,6 +599,46 @@ d3d12_resource_create(struct pipe_screen *pscreen,
    return d3d12_resource_create_or_place(d3d12_screen(pscreen), res, templ, nullptr, 0);
 }
 
+/* Chromium exports VA surfaces at the coded size (640x368) and imports them
+ * at the visible size (640x360). A D3D12 view always spans the whole
+ * resource, so sampling the import directly squashes the padding rows into
+ * the picture. Instead, the import is a private texture of the requested
+ * size, and the region is copied in from the buffer before each GPU read. */
+static struct pipe_resource *
+wrap_sub_rect(struct pipe_screen *pscreen, struct d3d12_resource *src,
+              const struct pipe_resource *templ,
+              const D3D12_SUBRESOURCE_FOOTPRINT *footprint)
+{
+   struct pipe_resource *psrc = &src->base.b;
+   psrc->width0 = footprint->Width;
+   psrc->height0 = static_cast<uint16_t>(footprint->Height);
+   /* 0 and 1 both mean single-sampled; copies require the same value */
+   psrc->nr_samples = templ->nr_samples;
+   /* The plane chain holds references, dst owns it from here */
+   psrc->next = NULL;
+
+   struct pipe_resource dst_templ = *templ;
+   dst_templ.next = NULL;
+   dst_templ.bind &= ~(PIPE_BIND_SHARED | PIPE_BIND_SCANOUT | PIPE_BIND_LINEAR);
+   struct pipe_resource *dst = pscreen->resource_create(pscreen, &dst_templ);
+   if (!dst) {
+      pipe_resource_reference(&psrc, NULL);
+      return NULL;
+   }
+   dst->next = templ->next;
+   d3d12_resource(dst)->sub_rect_src = psrc;
+   return dst;
+}
+
+void
+d3d12_refresh_sub_rect(struct d3d12_context *ctx, struct d3d12_resource *res)
+{
+   struct pipe_box box;
+   u_box_2d(0, 0, res->base.b.width0, res->base.b.height0, &box);
+   ctx->base.resource_copy_region(&ctx->base, &res->base.b, 0, 0, 0, 0,
+                                  res->sub_rect_src, 0, &box);
+}
+
 static struct pipe_resource *
 d3d12_resource_from_handle(struct pipe_screen *pscreen,
                           const struct pipe_resource *templ,
@@ -614,6 +656,8 @@ d3d12_resource_from_handle(struct pipe_screen *pscreen,
 
    if (templ && templ->next) {
       struct d3d12_resource* next = d3d12_resource(templ->next);
+      if (next->sub_rect_src)
+         next = d3d12_resource(next->sub_rect_src);
       if (next->bo) {
          res->base.b = *templ;
          res->bo = next->bo;
@@ -788,9 +832,12 @@ d3d12_resource_from_handle(struct pipe_screen *pscreen,
          res->base.b.array_size /= 6;
       }
       unsigned templ_samples = MAX2(templ->nr_samples, 1);
+      /* A dma-buf import may cover only the top-left part of the buffer,
+       * see wrap_sub_rect(). */
+      bool sub_rect = handle->type == WINSYS_HANDLE_TYPE_FD;
       if (res->base.b.target != templ->target ||
-          footprint->Width != templ->width0 ||
-          footprint->Height != templ->height0 ||
+          (sub_rect ? footprint->Width < templ->width0 : footprint->Width != templ->width0) ||
+          (sub_rect ? footprint->Height < templ->height0 : footprint->Height != templ->height0) ||
           footprint->Depth != templ->depth0 ||
           res->base.b.array_size != templ->array_size ||
           incoming_res_desc.SampleDesc.Count != templ_samples ||
@@ -875,6 +922,10 @@ d3d12_resource_from_handle(struct pipe_screen *pscreen,
    threaded_resource_init(&res->base.b, false);
    convert_planar_resource(res);
 
+   if (templ && handle->type == WINSYS_HANDLE_TYPE_FD &&
+       (footprint->Width != templ->width0 || footprint->Height != templ->height0))
+      return wrap_sub_rect(pscreen, res, templ, footprint);
+
    return &res->base.b;
 
 invalid:
@@ -895,6 +946,9 @@ d3d12_resource_get_handle(struct pipe_screen *pscreen,
 {
    struct d3d12_resource *res = d3d12_resource(pres);
    struct d3d12_screen *screen = d3d12_screen(pscreen);
+
+   if (res->sub_rect_src)
+      return d3d12_resource_get_handle(pscreen, pcontext, res->sub_rect_src, handle, usage);
 
    switch (handle->type) {
    case WINSYS_HANDLE_TYPE_D3D12_RES:
@@ -922,8 +976,15 @@ d3d12_resource_get_handle(struct pipe_screen *pscreen,
 #else
       handle->handle = (int)(intptr_t)d3d_handle;
 #endif
+      /* The importer ignores both (see wsl-adr 0003), but VA passes them on as
+       * the dma-buf pitch and offset, and EGL rejects a pitch of 0. Each fd is
+       * the whole resource, so the plane starts at 0. */
+      handle->stride = util_format_get_stride(pres->format, pres->width0);
+      handle->offset = 0;
       handle->format = pres->format;
-      handle->modifier = ~0ull;
+      /* Implicit layout. ~0 is not DRM_FORMAT_MOD_INVALID, and VA passes it on:
+       * Chromium then takes it for a real modifier and crashes. */
+      handle->modifier = DRM_FORMAT_MOD_INVALID;
       return true;
    }
 #ifndef _WIN32
