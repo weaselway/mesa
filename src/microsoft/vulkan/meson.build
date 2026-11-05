@@ -50,6 +50,7 @@ dzn_deps = [
   idep_vulkan_runtime,
   idep_vulkan_wsi,
   idep_mesautil,
+  idep_d3dkmt_priority,
   dep_dxheaders,
 ]
 
