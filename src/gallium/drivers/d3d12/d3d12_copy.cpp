@@ -485,6 +485,9 @@ d3d12_resource_copy_region(struct pipe_context *pctx,
    struct d3d12_resource *dst = d3d12_resource(pdst);
    struct d3d12_resource *src = d3d12_resource(psrc);
    struct pipe_resource *staging_res = NULL;
+
+   if (src->sub_rect_src)
+      d3d12_refresh_sub_rect(ctx, src);
    const struct pipe_box *src_box = psrc_box;
    struct pipe_box staging_box, dst_box;
 
