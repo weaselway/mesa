@@ -144,6 +144,13 @@ d3d12_bo_new(struct d3d12_screen *screen, uint64_t size, const pb_desc *pb_desc)
       d3d12_evicted : d3d12_resident;
 
    D3D12_HEAP_PROPERTIES heap_pris = GetCustomHeapProperties(dev, heap_type);
+#ifndef _WIN32
+   /* WSL maps write-combined memory so that CPU writes run at ~12 MB/s, which
+    * makes every texture upload through an upload heap crawl. Write-back is
+    * valid for L0 on UMA (readback heaps use it) and writes at memcpy speed. */
+   if (heap_type == D3D12_HEAP_TYPE_UPLOAD && screen->architecture.UMA)
+      heap_pris.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_WRITE_BACK;
+#endif
    HRESULT hres = dev->CreateCommittedResource(&heap_pris,
                                               heap_flags,
                                               &res_desc,
