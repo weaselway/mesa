@@ -33,6 +33,7 @@
 #endif
 #endif // HAVE_GALLIUM_D3D12_GRAPHICS
 #include "d3d12_debug.h"
+#include "d3dkmt_priority.h"
 #include "d3d12_fence.h"
 #include "d3d12_format.h"
 #include "d3d12_query.h"
@@ -668,6 +669,16 @@ d3d12_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 
    ctx->base.get_device_reset_status = d3d12_get_reset_status;
    ctx->flags = flags;
+
+   /* All contexts of a screen share one queue, so this sets the priority of
+    * the whole process. */
+   if (flags & PIPE_CONTEXT_HIGH_PRIORITY)
+      d3dkmt_priority_request(D3DKMT_PRIORITY_HIGH);
+   else if (flags & PIPE_CONTEXT_LOW_PRIORITY)
+      d3dkmt_priority_request(D3DKMT_PRIORITY_LOW);
+   else
+      d3dkmt_priority_request(D3DKMT_PRIORITY_MEDIUM);
+
    d3d12_context_resource_init(&ctx->base);
    d3d12_context_copy_init(&ctx->base);
 

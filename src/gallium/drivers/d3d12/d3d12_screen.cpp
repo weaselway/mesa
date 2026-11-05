@@ -62,6 +62,7 @@
 #endif
 
 #include "git_sha1.h"
+#include "d3dkmt_priority.h"
 
 #if defined(_WIN32) && defined(_WIN64) && !defined(_GAMING_XBOX)
 #include <filesystem>
@@ -265,6 +266,11 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
     * than eglSwapBuffers (Chromium's Ozone/Wayland backend, for one) otherwise
     * never trigger a flush at all, and their rendering piles up unsubmitted. */
    caps->native_fence_fd = true;
+
+   /* Mapped onto dxgkrnl context priorities, see d3dkmt_priority.h. */
+   caps->context_priority_mask = PIPE_CONTEXT_PRIORITY_LOW |
+                                 PIPE_CONTEXT_PRIORITY_MEDIUM |
+                                 PIPE_CONTEXT_PRIORITY_HIGH;
 #endif
 
    caps->prefer_real_buffer_in_constbuf0 = true;
@@ -1712,6 +1718,9 @@ d3d12_init_screen(struct d3d12_screen *screen, IUnknown *adapter)
 
    // Device can be imported with d3d12_create_dxcore_screen_from_d3d12_device
    if (!screen->dev) {
+      /* Before the device exists, so its contexts get a priority too. */
+      d3dkmt_priority_init();
+
 #ifndef _GAMING_XBOX
       ID3D12DeviceFactory *factory = try_create_device_factory(screen->d3d12_mod);
 
