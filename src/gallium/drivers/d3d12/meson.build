@@ -148,7 +148,7 @@ if is_xbox == false
   files_libd3d12 += files('d3d12_dxcore_screen.cpp')
 endif
 
-libd3d12_deps = [dep_dxheaders, idep_mesautil]
+libd3d12_deps = [dep_dxheaders, idep_mesautil, idep_d3dkmt_priority]
 if with_gallium_d3d12_graphics
   libd3d12_deps += [idep_nir_headers, idep_libdxil_compiler]
 endif
