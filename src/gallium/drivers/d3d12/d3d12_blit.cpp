@@ -635,6 +635,9 @@ d3d12_blit(struct pipe_context *pctx,
 {
    struct d3d12_context *ctx = d3d12_context(pctx);
 
+   if (d3d12_resource(info->src.resource)->sub_rect_src)
+      d3d12_refresh_sub_rect(ctx, d3d12_resource(info->src.resource));
+
    if (!info->render_condition_enable && ctx->current_predication) {
       if (D3D12_DEBUG_BLIT & d3d12_debug)
          debug_printf("D3D12 BLIT: Disable predication\n");
