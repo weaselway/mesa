@@ -186,6 +186,12 @@ d3d12_video_buffer_create_impl(struct pipe_context *pipe,
       ((pD3D12VideoBuffer->base.bind & PIPE_BIND_VIDEO_ENCODE_DPB) == 0))
       pD3D12VideoBuffer->base.bind |= (PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW);
 #endif // HAVE_GALLIUM_D3D12_GRAPHICS
+#ifndef _WIN32
+   // Chromium calls vaExportSurfaceHandle on surfaces it created with only a usage
+   // hint, and CreateSharedHandle needs a resource on a D3D12_HEAP_FLAG_SHARED heap.
+   if ((pD3D12VideoBuffer->base.bind & (PIPE_BIND_VIDEO_DECODE_DPB | PIPE_BIND_VIDEO_ENCODE_DPB)) == 0)
+      pD3D12VideoBuffer->base.bind |= PIPE_BIND_SHARED;
+#endif
 
    // Fill vtable
    pD3D12VideoBuffer->base.destroy                     = d3d12_video_buffer_destroy;
