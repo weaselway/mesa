@@ -44,6 +44,7 @@
 #include "glsl_types.h"
 
 #include "dxil_validator.h"
+#include "d3dkmt_priority.h"
 
 #include "git_sha1.h"
 
@@ -157,6 +158,12 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .EXT_vertex_attribute_divisor          = true,
       .EXT_memory_budget                     = true,
       .MSFT_layered_driver                   = true,
+#ifdef __linux__
+      /* Mapped onto dxgkrnl context priorities, see d3dkmt_priority.h. */
+      .KHR_global_priority                   = true,
+      .EXT_global_priority                   = true,
+      .EXT_global_priority_query             = true,
+#endif
    };
 }
 
@@ -808,6 +815,10 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
       .vertexAttributeInstanceRateDivisor = true,
       .vertexAttributeInstanceRateZeroDivisor = true,
       .shaderReplicatedComposites         = true,
+
+#ifdef __linux__
+      .globalPriorityQuery                = true,
+#endif
    };
 }
 
@@ -1144,6 +1155,9 @@ dzn_physical_device_create(struct vk_instance *instance,
    pdev->vk.supported_sync_types = pdev->sync_types;
 
    pdev->vk.pipeline_cache_import_ops = dzn_pipeline_cache_import_ops;
+
+   /* Before the device exists, so its contexts get a priority too. */
+   d3dkmt_priority_init();
 
    pdev->dev = d3d12_create_device(dzn_instance->d3d12_mod,
                                    pdev->adapter,
@@ -1924,8 +1938,20 @@ dzn_GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice,
       vk_outarray_append_typed(VkQueueFamilyProperties2, &out, p) {
          p->queueFamilyProperties = pdev->queue_families[i].props;
 
-         vk_foreach_struct(sType, ext, pQueueFamilyProperties->pNext) {
-            vk_debug_ignored_stype(sType);
+         vk_foreach_struct(sType, ext, p->pNext) {
+            switch (sType) {
+            case VK_STRUCTURE_TYPE_QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES: {
+               VkQueueFamilyGlobalPriorityProperties *props = ext;
+               props->priorityCount = 3;
+               props->priorities[0] = VK_QUEUE_GLOBAL_PRIORITY_LOW;
+               props->priorities[1] = VK_QUEUE_GLOBAL_PRIORITY_MEDIUM;
+               props->priorities[2] = VK_QUEUE_GLOBAL_PRIORITY_HIGH;
+               break;
+            }
+            default:
+               vk_debug_ignored_stype(sType);
+               break;
+            }
          }
       }
    }
@@ -2136,9 +2162,25 @@ dzn_queue_init(struct dzn_queue *queue,
       priority_in > 0.5f ? D3D12_COMMAND_QUEUE_PRIORITY_HIGH : D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
    queue_desc.NodeMask = 0;
 
-   if (FAILED(ID3D12Device1_CreateCommandQueue(device->dev, &queue_desc,
-                                               &IID_ID3D12CommandQueue,
-                                               (void **)&queue->cmdqueue))) {
+   /* Each D3D12 queue creates exactly one dxgkrnl context, on this thread. */
+   const VkDeviceQueueGlobalPriorityCreateInfo *global_priority =
+      vk_find_struct_const(pCreateInfo->pNext, DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO);
+   int kmt_priority = D3DKMT_PRIORITY_MEDIUM;
+   switch (global_priority ? global_priority->globalPriority : VK_QUEUE_GLOBAL_PRIORITY_MEDIUM) {
+   case VK_QUEUE_GLOBAL_PRIORITY_LOW: kmt_priority = D3DKMT_PRIORITY_LOW; break;
+   case VK_QUEUE_GLOBAL_PRIORITY_MEDIUM: kmt_priority = D3DKMT_PRIORITY_MEDIUM; break;
+   case VK_QUEUE_GLOBAL_PRIORITY_HIGH: kmt_priority = D3DKMT_PRIORITY_HIGH; break;
+   default:
+      dzn_queue_finish(queue);
+      return vk_error(device->vk.physical->instance, VK_ERROR_NOT_PERMITTED);
+   }
+
+   d3dkmt_priority_set_pending(kmt_priority);
+   HRESULT hr = ID3D12Device1_CreateCommandQueue(device->dev, &queue_desc,
+                                                &IID_ID3D12CommandQueue,
+                                                (void **)&queue->cmdqueue);
+   d3dkmt_priority_set_pending(D3DKMT_PRIORITY_NONE);
+   if (FAILED(hr)) {
       dzn_queue_finish(queue);
       return vk_error(device->vk.physical->instance, VK_ERROR_INITIALIZATION_FAILED);
    }
