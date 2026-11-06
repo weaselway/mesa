@@ -3,6 +3,12 @@
 
 libd3d12_compiler_args = []
 
+# The DEFINE_ENUM_FLAG_OPERATORS from the DirectX-Headers WSL stubs implement
+# |= and &= by writing through an integer reference to the enum, which breaks
+# strict aliasing: GCC/Clang may drop those writes (eg. the Intel rate control
+# reconfiguration workaround in d3d12_video_enc.cpp silently does nothing).
+libd3d12_compiler_args += cc.get_supported_arguments(['-fno-strict-aliasing'])
+
 libd3d12_compiler_args += cc.get_supported_arguments([
     '/we4267',
     '/we4996',
