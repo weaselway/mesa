@@ -558,6 +558,9 @@ enum d3d12_video_encoder_driver_workarounds
    // Workaround for drivers supporting rate control reconfiguration but not reporting it
    // and having issues with encoder state/heap objects recreation
    d3d12_video_encoder_driver_workaround_rate_control_reconfig = 0x1,
+   // Workarounds for Intel drivers (seen with Arc on WSL) on the legacy EncodeFrame path,
+   // used when ID3D12VideoEncodeCommandList4 is not available
+   d3d12_video_encoder_driver_workaround_intel_legacy_encode = 0x2,
 };
 DEFINE_ENUM_FLAG_OPERATORS(d3d12_video_encoder_driver_workarounds);
 
