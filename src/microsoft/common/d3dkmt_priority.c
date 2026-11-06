@@ -4,6 +4,7 @@
  */
 
 #include "d3dkmt_priority.h"
+#include "wsl_got.h"
 
 #include <dlfcn.h>
 #include <link.h>
@@ -105,68 +106,6 @@ hook_destroy_context(const struct d3dkmt_destroycontext *args)
    return real_destroy(args);
 }
 
-/* glibc stores absolute addresses in the dynamic section, other loaders keep
- * them relative to the load bias.
- */
-static uintptr_t
-dyn_ptr(const struct link_map *lm, uintptr_t ptr)
-{
-   return ptr < lm->l_addr ? lm->l_addr + ptr : ptr;
-}
-
-static void **
-find_got_slot(const struct link_map *lm, const char *name)
-{
-   const ElfW(Rela) *rel = NULL;
-   const ElfW(Sym) *symtab = NULL;
-   const char *strtab = NULL;
-   size_t rel_size = 0;
-   ElfW(Sxword) rel_type = 0;
-
-   for (const ElfW(Dyn) *dyn = lm->l_ld; dyn->d_tag != DT_NULL; dyn++) {
-      switch (dyn->d_tag) {
-      case DT_JMPREL: rel = (const void *)dyn_ptr(lm, dyn->d_un.d_ptr); break;
-      case DT_PLTRELSZ: rel_size = dyn->d_un.d_val; break;
-      case DT_PLTREL: rel_type = dyn->d_un.d_val; break;
-      case DT_SYMTAB: symtab = (const void *)dyn_ptr(lm, dyn->d_un.d_ptr); break;
-      case DT_STRTAB: strtab = (const void *)dyn_ptr(lm, dyn->d_un.d_ptr); break;
-      }
-   }
-   if (!rel || !symtab || !strtab || rel_type != DT_RELA)
-      return NULL;
-
-   for (size_t i = 0; i < rel_size / sizeof(*rel); i++) {
-#if UINTPTR_MAX > 0xffffffff
-      const ElfW(Sym) *sym = &symtab[ELF64_R_SYM(rel[i].r_info)];
-#else
-      const ElfW(Sym) *sym = &symtab[ELF32_R_SYM(rel[i].r_info)];
-#endif
-      if (strcmp(strtab + sym->st_name, name) == 0)
-         return (void **)(lm->l_addr + rel[i].r_offset);
-   }
-   return NULL;
-}
-
-struct relro {
-   ElfW(Addr) base;
-   uintptr_t start, end;
-};
-
-static int
-find_relro(struct dl_phdr_info *info, size_t size, void *data)
-{
-   struct relro *relro = data;
-   if (info->dlpi_addr != relro->base)
-      return 0;
-   for (unsigned i = 0; i < info->dlpi_phnum; i++) {
-      if (info->dlpi_phdr[i].p_type == PT_GNU_RELRO) {
-         relro->start = info->dlpi_addr + info->dlpi_phdr[i].p_vaddr;
-         relro->end = relro->start + info->dlpi_phdr[i].p_memsz;
-      }
-   }
-   return 1;
-}
-
 /* A slot still pointing into libd3d12core.so is the lazy binding stub. Any
  * other value is either the resolved function or the hook of another Mesa
  * driver in this process, which we chain to.
@@ -196,17 +135,14 @@ install(void)
    if (dlinfo(core, RTLD_DI_LINKMAP, &lm) != 0)
       return;
 
-   void **create_slot = find_got_slot(lm, "D3DKMTCreateContextVirtual");
-   void **destroy_slot = find_got_slot(lm, "D3DKMTDestroyContext");
+   void **create_slot = wsl_got_find_slot(lm, "D3DKMTCreateContextVirtual");
+   void **destroy_slot = wsl_got_find_slot(lm, "D3DKMTDestroyContext");
    if (!create_slot || !destroy_slot) {
       mesa_logw("d3dkmt: context functions not found in libd3d12core.so, priorities disabled");
       return;
    }
 
-   struct relro relro = {.base = lm->l_addr};
-   dl_iterate_phdr(find_relro, &relro);
-   if (((uintptr_t)create_slot >= relro.start && (uintptr_t)create_slot < relro.end) ||
-       ((uintptr_t)destroy_slot >= relro.start && (uintptr_t)destroy_slot < relro.end)) {
+   if (wsl_got_is_relro(lm, create_slot) || wsl_got_is_relro(lm, destroy_slot)) {
       mesa_logw("d3dkmt: GOT of libd3d12core.so is read-only, priorities disabled");
       return;
    }

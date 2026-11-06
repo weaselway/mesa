@@ -34,6 +34,7 @@
 #endif // HAVE_GALLIUM_D3D12_GRAPHICS
 #include "d3d12_debug.h"
 #include "d3dkmt_priority.h"
+#include "intel_dxva_mutex.h"
 #include "d3d12_fence.h"
 #include "d3d12_format.h"
 #include "d3d12_query.h"
@@ -475,6 +476,8 @@ struct pipe_video_codec*
 d3d12_video_create_codec(struct pipe_context *context,
                          const struct pipe_video_codec *templat)
 {
+    intel_dxva_mutex_fix();
+
     if (templat->entrypoint == PIPE_VIDEO_ENTRYPOINT_ENCODE) {
         return d3d12_video_encoder_create_encoder(context, templat);
     } else if (templat->entrypoint == PIPE_VIDEO_ENTRYPOINT_BITSTREAM) {
