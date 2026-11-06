@@ -259,6 +259,7 @@ enum dxil_intr {
    DXIL_INTR_FABS = 6,
    DXIL_INTR_SATURATE = 7,
 
+   DXIL_INTR_ISINF = 9,
    DXIL_INTR_ISFINITE = 10,
    DXIL_INTR_ISNORMAL = 11,
 
@@ -619,6 +620,7 @@ unary_func_name(enum dxil_intr intr)
    case DXIL_INTR_FIRSTBIT_SHI:
    case DXIL_INTR_FIRSTBIT_LO:
       return "dx.op.unaryBits";
+   case DXIL_INTR_ISINF:
    case DXIL_INTR_ISFINITE:
    case DXIL_INTR_ISNORMAL:
       return "dx.op.isSpecialFloat";
@@ -2317,6 +2319,28 @@ emit_shift(struct ntd_context *ctx, nir_alu_instr *alu,
    return true;
 }
 
+/* Match feq(fabs(x), +inf), which is what GLSL isinf() lowers to, and return x.
+ * Intel's DXIL compiler miscompiles "fcmp oeq (FAbs x), +inf" on some GPUs
+ * (seen on Arc B390), so emit IsInf like DXC does for HLSL isinf().
+ */
+static bool
+match_fabs_eq_inf(nir_alu_instr *alu, nir_scalar *x)
+{
+   nir_scalar cmp = nir_get_scalar(&alu->def, 0);
+   for (unsigned i = 0; i < 2; i++) {
+      nir_scalar abs = nir_scalar_chase_alu_src(cmp, i);
+      nir_scalar other = nir_scalar_chase_alu_src(cmp, 1 - i);
+      if (!nir_scalar_is_const(other) || !nir_scalar_is_alu(abs) ||
+          nir_scalar_alu_op(abs) != nir_op_fabs ||
+          nir_scalar_as_float(other) != INFINITY)
+         continue;
+      *x = nir_scalar_chase_alu_src(abs, 0);
+      /* isSpecialFloat only has f16 and f32 overloads */
+      return x->def->bit_size <= 32;
+   }
+   return false;
+}
+
 static bool
 emit_cmp(struct ntd_context *ctx, nir_alu_instr *alu,
          enum dxil_cmp_pred pred,
@@ -2949,7 +2973,15 @@ emit_alu(struct ntd_context *ctx, nir_alu_instr *alu)
    case nir_op_uge:  return emit_cmp(ctx, alu, DXIL_ICMP_UGE, src[0], src[1]);
    case nir_op_ilt:  return emit_cmp(ctx, alu, DXIL_ICMP_SLT, src[0], src[1]);
    case nir_op_ult:  return emit_cmp(ctx, alu, DXIL_ICMP_ULT, src[0], src[1]);
-   case nir_op_feq:  return emit_cmp(ctx, alu, DXIL_FCMP_OEQ, src[0], src[1]);
+   case nir_op_feq: {
+      nir_scalar x;
+      if (match_fabs_eq_inf(alu, &x)) {
+         nir_src x_src = nir_src_for_ssa(x.def);
+         const struct dxil_value *v = get_src(ctx, &x_src, x.comp, nir_type_float);
+         return v && emit_unary_intin(ctx, alu, DXIL_INTR_ISINF, v);
+      }
+      return emit_cmp(ctx, alu, DXIL_FCMP_OEQ, src[0], src[1]);
+   }
    case nir_op_fneu: return emit_cmp(ctx, alu, DXIL_FCMP_UNE, src[0], src[1]);
    case nir_op_flt:  return emit_cmp(ctx, alu, DXIL_FCMP_OLT, src[0], src[1]);
    case nir_op_fge:  return emit_cmp(ctx, alu, DXIL_FCMP_OGE, src[0], src[1]);
