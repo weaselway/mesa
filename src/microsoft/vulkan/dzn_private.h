@@ -356,6 +356,11 @@ struct dzn_device_memory {
 
    /* If the resource is exportable, this is the pre-created handle for that */
    HANDLE export_handle;
+#ifdef __linux__
+   /* A dma-buf from dxgdrm wrapping export_handle, if DMA_BUF export was
+    * asked for, else -1. One per memory, so all its fds share the fences. */
+   int dmabuf_fd;
+#endif
 
    /* These flags need to be added into all resources created on this heap */
    D3D12_RESOURCE_FLAGS res_flags;
