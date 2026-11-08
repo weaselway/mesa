@@ -29,6 +29,7 @@
 #include "util/u_dl.h"
 
 #include <directx/dxcore.h>
+#include "wsl_default_adapter.h"
 #include <dxguids/dxguids.h>
 
 static IDXCoreAdapterFactory *
@@ -71,58 +72,13 @@ choose_dxcore_adapter(IDXCoreAdapterFactory *factory, LUID *adapter_luid)
 
    IDXCoreAdapterList *list = nullptr;
    if (SUCCEEDED(factory->CreateAdapterList(1, &DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS, &list))) {
-
-#ifndef _WIN32
-      // Pick the user selected adapter if any
-      const char *adapter_name = os_get_option("MESA_D3D12_DEFAULT_ADAPTER_NAME");
-      if (adapter_name) {
-         for (unsigned i=0; i<list->GetAdapterCount(); i++) {
-            if (SUCCEEDED(list->GetAdapter(i, &adapter))) {
-
-               size_t desc_size;
-               if (!SUCCEEDED(adapter->GetPropertySize(DXCoreAdapterProperty::DriverDescription, &desc_size))) {
-                  adapter->Release();
-                  continue;
-               }
-
-               char *desc = (char*)malloc(desc_size);
-               if (!desc) {
-                  adapter->Release();
-                  continue;
-               }
-
-               if (!SUCCEEDED(adapter->GetProperty(DXCoreAdapterProperty::DriverDescription, desc_size, desc))) {
-                  free(desc);
-                  adapter->Release();
-                  continue;
-               }
-
-               if (strcasestr(desc, adapter_name)) {
-                  free(desc);
-                  return adapter;
-               } else {
-                  free(desc);
-                  adapter->Release();
-               }
-            }
-         }
-         debug_printf("D3D12: Couldn't find an adapter containing the substring (%s)\n", adapter_name);
-      }
-#endif
-
-      // Adapter not specified or not found, so pick an integrated adapter if possible
-      for (unsigned i = 0; i < list->GetAdapterCount(); ++i) {
-         if (SUCCEEDED(list->GetAdapter(i, &adapter))) {
-            bool is_integrated;
-            if (SUCCEEDED(adapter->GetProperty(DXCoreAdapterProperty::IsIntegrated, &is_integrated)) && is_integrated)
-               return adapter;
-            adapter->Release();
-         }
-      }
-
-      // No integrated GPUs, so pick the first valid one
-      if (list->GetAdapterCount() > 0 && SUCCEEDED(list->GetAdapter(0, &adapter)))
-         return adapter;
+      /* Shared with dzn, which has to know the adapter a d3d12 compositor
+       * picked. */
+      int index = wsl_default_adapter_index(list);
+      if (index < 0 || FAILED(list->GetAdapter(index, &adapter)))
+         adapter = NULL;
+      list->Release();
+      return adapter;
    }
 
    return NULL;
