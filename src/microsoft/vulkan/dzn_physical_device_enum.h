@@ -46,6 +46,9 @@ struct dzn_physical_device_desc {
    uint64_t dedicated_video_memory;
    LUID adapter_luid;
    bool is_warp;
+   /* The adapter d3d12 takes by default, so the one a d3d12 compositor runs
+    * on (wsl_default_adapter_index). */
+   bool is_default;
    char description[128];
 };
 
