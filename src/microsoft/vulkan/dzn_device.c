@@ -60,6 +60,7 @@
 #endif
 
 #ifdef __linux__
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
@@ -2681,6 +2682,10 @@ dzn_device_memory_destroy(struct dzn_device_memory *mem,
    if ((intptr_t)mem->export_handle >= 0)
       close((int)(intptr_t)mem->export_handle);
 #endif
+#ifdef __linux__
+   if (mem->dmabuf_fd >= 0)
+      close(mem->dmabuf_fd);
+#endif
 
    vk_object_base_finish(&mem->base);
    vk_free2(&device->vk.alloc, pAllocator, mem);
@@ -2829,6 +2834,12 @@ dzn_device_memory_create(struct dzn_device *device,
        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT);
    if (image && imported_from_d3d11)
       valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+#ifdef __linux__
+   /* shortcut: not advertised in the external memory queries, only WSI asks
+    * for it; add it there if other users need it. */
+   if (pdevice->dxgdrm_fd >= 0)
+      valid_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+#endif
 
    if (export_flags & ~valid_flags)
       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
@@ -2842,6 +2853,9 @@ dzn_device_memory_create(struct dzn_device *device,
    vk_object_base_init(&device->vk, &mem->base, VK_OBJECT_TYPE_DEVICE_MEMORY);
 #ifndef _WIN32
    mem->export_handle = (HANDLE)(intptr_t)-1;
+#endif
+#ifdef __linux__
+   mem->dmabuf_fd = -1;
 #endif
 
    /* The Vulkan 1.0.33 spec says "allocationSize must be greater than 0". */
@@ -3037,6 +3051,23 @@ dzn_device_memory_create(struct dzn_device *device,
       if (FAILED(ID3D12Device_CreateSharedHandle(device->dev, shareable, pAttributes,
                                                  dwAccess, name, &mem->export_handle)))
          goto cleanup;
+
+#ifdef __linux__
+      /* dxgdrm wraps the shared handle in a GEM object, which exports as a
+       * real dma-buf that can carry implicit fences. Importers get the shared
+       * handle back with DXGDRM_DMABUF_TO_SHARED (dxgdrm ADR 0021). */
+      if (export_flags & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
+         uint32_t gem_handle;
+         if (drmPrimeFDToHandle(pdevice->dxgdrm_fd, (int)(intptr_t)mem->export_handle, &gem_handle))
+            goto cleanup;
+         int ret = drmPrimeHandleToFD(pdevice->dxgdrm_fd, gem_handle, DRM_CLOEXEC | DRM_RDWR,
+                                      &mem->dmabuf_fd);
+         /* The dma-buf holds its own reference to the object. */
+         drmCloseBufferHandle(pdevice->dxgdrm_fd, gem_handle);
+         if (ret)
+            goto cleanup;
+      }
+#endif
    }
 
    *out = dzn_device_memory_to_handle(mem);
@@ -3901,6 +3932,11 @@ dzn_GetMemoryFdKHR(VkDevice device,
       /* Every call gets an fd of its own, as the spec asks; the memory keeps
        * its handle until it is freed. */
       *pFd = os_dupfd_cloexec((int)(intptr_t)mem->export_handle);
+      return *pFd >= 0 ? VK_SUCCESS : vk_error(device, VK_ERROR_TOO_MANY_OBJECTS);
+   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT:
+      if (mem->dmabuf_fd < 0)
+         return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+      *pFd = os_dupfd_cloexec(mem->dmabuf_fd);
       return *pFd >= 0 ? VK_SUCCESS : vk_error(device, VK_ERROR_TOO_MANY_OBJECTS);
    default:
       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
