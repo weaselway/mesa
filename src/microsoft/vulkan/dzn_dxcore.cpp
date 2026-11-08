@@ -24,6 +24,7 @@
 #include "dzn_physical_device_enum.h"
 #include <directx/dxcore.h>
 #include <dxguids/dxguids.h>
+#include "wsl_default_adapter.h"
 
 #include "util/u_dl.h"
 #include "util/log.h"
@@ -61,6 +62,7 @@ dzn_enumerate_physical_devices_dxcore(struct vk_instance *instance)
     * 11_0) is skipped, so it does not hide the others. Enumeration fails
     * only if no adapter could be added, or on another error. */
    uint32_t adapter_count = list->GetAdapterCount();
+   int default_index = wsl_default_adapter_index(list);
    VkResult result = adapter_count ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS;
    IDXCoreAdapter *adapter;
    for (uint32_t i = 0; i < adapter_count; ++i) {
@@ -83,6 +85,7 @@ dzn_enumerate_physical_devices_dxcore(struct vk_instance *instance)
             desc.subsys_id = hardware_id.subSysID;
             desc.revision = hardware_id.revision;
             desc.is_warp = !is_hardware;
+            desc.is_default = (int)i == default_index;
             adapter_result = dzn_instance_add_physical_device(instance, adapter, &desc);
          }
 
