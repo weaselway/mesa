@@ -47,6 +47,7 @@
 #include "util/blob.h"
 #include "util/hash_table.h"
 #include "util/u_dynarray.h"
+#include "util/u_queue.h"
 #include "util/log.h"
 #include "dzn_drirc.h"
 
@@ -179,7 +180,7 @@ const struct dzn_meta_blit *
 dzn_meta_blits_get_context(struct dzn_device *device,
                            const struct dzn_meta_blit_key *key);
 
-#define MAX_SYNC_TYPES 3
+#define MAX_SYNC_TYPES 4
 #define MAX_QUEUE_FAMILIES 2
 
 struct dzn_physical_device {
@@ -235,6 +236,11 @@ struct dzn_physical_device {
    int dxgdrm_fd;
    dev_t dxgdrm_render_devid;
    dev_t dxgdrm_primary_devid;
+   /* With dxgdrm, exported semaphores and sync files are DRM syncobjs the
+    * compositor understands, so the dzn types must not export anything. */
+   struct vk_sync_type local_sync_type;
+   struct vk_sync_binary_type local_binary_type;
+   struct vk_sync_type drm_syncobj_type;
 #endif
 };
 
@@ -269,6 +275,13 @@ struct dzn_queue {
    ID3D12CommandQueue *cmdqueue;
    ID3D12Fence *fence;
    uint64_t fence_point;
+#ifdef __linux__
+   /* D3D12 cannot wait on a sync file, so for waits on DRM syncobjs a
+    * thread waits on the CPU and signals bridge_fence for the GPU. */
+   struct util_queue bridge_queue;
+   ID3D12Fence *bridge_fence;
+   uint64_t bridge_point;
+#endif
 };
 
 struct dzn_descriptor_heap {
