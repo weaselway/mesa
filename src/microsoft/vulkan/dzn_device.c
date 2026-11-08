@@ -3075,6 +3075,11 @@ dzn_device_memory_create(struct dzn_device *device,
    if (export_flags & ~valid_flags)
       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
 
+   /* D3D12 cannot share CPU-accessible heaps. */
+   if (export_flags && !host_pointer &&
+       (mem_type->propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+
    struct dzn_device_memory *mem =
       vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*mem), 8,
                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
@@ -3099,10 +3104,8 @@ dzn_device_memory_create(struct dzn_device *device,
       heap_desc.Flags =
          dzn_physical_device_get_heap_flags_for_mem_type(pdevice, pAllocateInfo->memoryTypeIndex);
    heap_desc.Properties = deduce_heap_properties_from_memory(pdevice, mem_type);
-   if (export_flags) {
+   if (export_flags)
       heap_desc.Flags |= D3D12_HEAP_FLAG_SHARED;
-      assert(host_pointer || heap_desc.Properties.CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE);
-   }
 
    VkResult error = VK_ERROR_OUT_OF_DEVICE_MEMORY;
 
