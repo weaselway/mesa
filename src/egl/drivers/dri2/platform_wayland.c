@@ -1908,19 +1908,12 @@ dri2_wl_swap_buffers_with_damage(_EGLDisplay *disp, _EGLSurface *draw,
    if (update_buffers_if_needed(dri2_surf, &flow) < 0)
       return _eglError(EGL_BAD_ALLOC, "dri2_swap_buffers");
 
-   /* Throttle to the compositor's frame callback even when the application
-    * asked for SwapInterval 0. Upstream only falls back to a wl_display_sync
-    * below, which round-trips in well under a frame and so paces nothing: an
-    * unthrottled client then drives the compositor to composite (and, here,
-    * RDP-encode) at whatever rate it can render. That is not a cost this
-    * session can absorb, so interval 0 is treated as 1.
-    *
-    * This must be requested before the wl_surface_commit further down, since
-    * wl_surface_frame is double-buffered surface state. */
-   dri2_surf->throttle_callback =
-      wl_surface_frame(dri2_surf->wayland_surface.wrapper);
-   wl_callback_add_listener(dri2_surf->throttle_callback, &throttle_listener,
-                            dri2_surf);
+   if (draw->SwapInterval > 0) {
+      dri2_surf->throttle_callback =
+         wl_surface_frame(dri2_surf->wayland_surface.wrapper);
+      wl_callback_add_listener(dri2_surf->throttle_callback, &throttle_listener,
+                               dri2_surf);
+   }
 
    dri2_surf->back->age = 1;
    dri2_surf->current = dri2_surf->back;
