@@ -60,12 +60,17 @@
 #endif
 
 #ifdef __linux__
+#include <errno.h>
 #include <fcntl.h>
+#include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
 #include <xf86drm.h>
+#include <libsync.h>
+#include "drm-uapi/dxgdrm_drm.h"
 #include "util/os_file.h"
+#include "vk_drm_syncobj.h"
 #include "wsl_dxgdrm.h"
 #endif
 
@@ -1163,7 +1168,9 @@ dzn_physical_device_init_dxgdrm(struct dzn_physical_device *pdev)
                 !stat(drm_dev->nodes[DRM_NODE_PRIMARY], &primary_st) &&
                 !fstat(fd, &render_st);
    drmFreeDevice(&drm_dev);
-   if (!found) {
+   if (found)
+      pdev->drm_syncobj_type = vk_drm_syncobj_get_type(fd);
+   if (!found || !pdev->drm_syncobj_type.features) {
       close(fd);
       return;
    }
@@ -1216,8 +1223,24 @@ dzn_physical_device_create(struct vk_instance *instance,
    struct dzn_instance *dzn_instance = container_of(instance, struct dzn_instance, vk);
 
    uint32_t num_sync_types = 0;
-   pdev->sync_types[num_sync_types++] = &dzn_sync_type;
-   pdev->sync_types[num_sync_types++] = &dzn_instance->sync_binary_type.sync;
+#ifdef __linux__
+   if (pdev->dxgdrm_fd >= 0) {
+      pdev->local_sync_type = dzn_sync_type;
+      pdev->local_sync_type.import_opaque_fd = NULL;
+      pdev->local_sync_type.export_opaque_fd = NULL;
+      pdev->local_binary_type = vk_sync_binary_get_type(&pdev->local_sync_type);
+      pdev->local_binary_type.sync.import_sync_file = NULL;
+      pdev->local_binary_type.sync.export_sync_file = NULL;
+      /* The first timeline type decides the timeline mode: native. */
+      pdev->sync_types[num_sync_types++] = &pdev->local_sync_type;
+      pdev->sync_types[num_sync_types++] = &pdev->local_binary_type.sync;
+      pdev->sync_types[num_sync_types++] = &pdev->drm_syncobj_type;
+   } else
+#endif
+   {
+      pdev->sync_types[num_sync_types++] = &dzn_sync_type;
+      pdev->sync_types[num_sync_types++] = &dzn_instance->sync_binary_type.sync;
+   }
    pdev->sync_types[num_sync_types++] = &vk_sync_dummy_type;
    pdev->sync_types[num_sync_types] = NULL;
    assert(num_sync_types <= MAX_SYNC_TYPES);
@@ -2086,14 +2109,184 @@ dzn_EnumerateInstanceLayerProperties(uint32_t *pPropertyCount,
    return vk_error(NULL, VK_ERROR_LAYER_NOT_PRESENT);
 }
 
+#ifdef __linux__
+struct dzn_bridge_job {
+   struct util_sync_provider *sync;
+   ID3D12Fence *fence;
+   uint64_t value;
+   /* Either a sync file, or a timeline point on a syncobj */
+   int sync_file;
+   uint32_t syncobj;
+   uint64_t point;
+};
+
+static void
+dzn_bridge_job_execute(void *data, void *gdata, int thread_index)
+{
+   struct dzn_bridge_job *job = data;
+   int ret;
+
+   if (job->sync_file >= 0) {
+      ret = sync_wait(job->sync_file, -1);
+      close(job->sync_file);
+   } else {
+      ret = job->sync->timeline_wait(job->sync, &job->syncobj, &job->point, 1,
+                                     INT64_MAX,
+                                     DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT,
+                                     NULL);
+   }
+   if (ret)
+      mesa_loge("dzn: waiting on a DRM syncobj failed: %s", strerror(errno));
+
+   /* Signal even on failure, else the queue hangs for good. */
+   ID3D12Fence_Signal(job->fence, job->value);
+}
+
+static void
+dzn_bridge_job_free(void *data, void *gdata, int thread_index)
+{
+   free(data);
+}
+
+static VkResult
+dzn_queue_wait_drm_syncobj(struct dzn_queue *queue, const struct vk_sync_wait *wait)
+{
+   struct dzn_device *device = container_of(queue->vk.base.device, struct dzn_device, vk);
+   struct util_sync_provider *sync = device->vk.sync;
+   uint32_t syncobj = vk_sync_as_drm_syncobj(wait->sync)->syncobj;
+   int sync_file = -1;
+
+   if (wait->sync->flags & VK_SYNC_IS_TIMELINE) {
+      uint64_t value;
+      if (sync->query(sync, &syncobj, &value, 1, 0))
+         return vk_errorf(device, VK_ERROR_UNKNOWN, "DRM_IOCTL_SYNCOBJ_QUERY failed: %m");
+      if (value >= wait->wait_value)
+         return VK_SUCCESS;
+   } else {
+      /* Take the fence now: a temporary payload is gone after the submit. */
+      if (sync->export_sync_file(sync, syncobj, &sync_file))
+         return vk_errorf(device, VK_ERROR_UNKNOWN, "DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD failed: %m");
+      if (sync_wait(sync_file, 0) == 0) {
+         close(sync_file);
+         return VK_SUCCESS;
+      }
+   }
+
+   if (!queue->bridge_fence) {
+      if (FAILED(ID3D12Device1_CreateFence(device->dev, 0, D3D12_FENCE_FLAG_NONE,
+                                           &IID_ID3D12Fence,
+                                           (void **)&queue->bridge_fence)))
+         goto fail;
+      if (!util_queue_init(&queue->bridge_queue, "dzn_syncobj", 8, 1,
+                           UTIL_QUEUE_INIT_RESIZE_IF_FULL, NULL)) {
+         ID3D12Fence_Release(queue->bridge_fence);
+         queue->bridge_fence = NULL;
+         goto fail;
+      }
+   }
+
+   struct dzn_bridge_job *job = malloc(sizeof(*job));
+   if (!job)
+      goto fail;
+
+   *job = (struct dzn_bridge_job) {
+      .sync = sync,
+      .fence = queue->bridge_fence,
+      .value = ++queue->bridge_point,
+      .sync_file = sync_file,
+      .syncobj = syncobj,
+      .point = wait->wait_value,
+   };
+   util_queue_add_job(&queue->bridge_queue, job, NULL, dzn_bridge_job_execute,
+                      dzn_bridge_job_free, 0);
+
+   if (FAILED(ID3D12CommandQueue_Wait(queue->cmdqueue, queue->bridge_fence,
+                                      queue->bridge_point)))
+      return vk_error(device, VK_ERROR_UNKNOWN);
+
+   return VK_SUCCESS;
+
+fail:
+   if (sync_file >= 0)
+      close(sync_file);
+   return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+}
+
+/* Makes a sync file that signals when the queue fence reaches value. */
+static VkResult
+dzn_queue_fence_sync_file(struct dzn_queue *queue, uint64_t value, int *sync_file)
+{
+   struct dzn_device *device = container_of(queue->vk.base.device, struct dzn_device, vk);
+   struct dzn_physical_device *pdev =
+      container_of(device->vk.physical, struct dzn_physical_device, vk);
+
+   int event_fd = eventfd(0, EFD_CLOEXEC);
+   if (event_fd < 0)
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+   /* The kernel holds its own reference on the eventfd from here on. */
+   if (FAILED(ID3D12Fence_SetEventOnCompletion(queue->fence, value,
+                                               (HANDLE)(intptr_t)event_fd))) {
+      close(event_fd);
+      return vk_error(device, VK_ERROR_UNKNOWN);
+   }
+
+   struct drm_dxgdrm_fence_from_eventfd args = {
+      .eventfd = event_fd,
+      .fd = -1,
+   };
+   int ret = drmIoctl(pdev->dxgdrm_fd, DRM_IOCTL_DXGDRM_FENCE_FROM_EVENTFD, &args);
+   close(event_fd);
+   if (ret)
+      return vk_errorf(device, VK_ERROR_UNKNOWN, "DXGDRM_FENCE_FROM_EVENTFD failed: %m");
+
+   *sync_file = args.fd;
+   return VK_SUCCESS;
+}
+
+static VkResult
+dzn_queue_signal_drm_syncobj(struct dzn_queue *queue,
+                             const struct vk_sync_signal *signal,
+                             int sync_file)
+{
+   struct vk_device *device = queue->vk.base.device;
+   struct util_sync_provider *sync = device->sync;
+   uint32_t syncobj = vk_sync_as_drm_syncobj(signal->sync)->syncobj;
+
+   if (!(signal->sync->flags & VK_SYNC_IS_TIMELINE)) {
+      if (sync->import_sync_file(sync, syncobj, sync_file))
+         return vk_errorf(device, VK_ERROR_UNKNOWN, "DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE failed: %m");
+      return VK_SUCCESS;
+   }
+
+   uint32_t tmp;
+   if (sync->create(sync, 0, &tmp))
+      return vk_errorf(device, VK_ERROR_UNKNOWN, "DRM_IOCTL_SYNCOBJ_CREATE failed: %m");
+
+   int ret = sync->import_sync_file(sync, tmp, sync_file);
+   if (!ret)
+      ret = sync->transfer(sync, syncobj, signal->signal_value, tmp, 0, 0);
+   sync->destroy(sync, tmp);
+   if (ret)
+      return vk_errorf(device, VK_ERROR_UNKNOWN, "DRM_IOCTL_SYNCOBJ_TRANSFER failed: %m");
+
+   return VK_SUCCESS;
+}
+#endif
+
 static VkResult
 dzn_queue_sync_wait(struct dzn_queue *queue, const struct vk_sync_wait *wait)
 {
    if (wait->sync->type == &vk_sync_dummy_type)
       return VK_SUCCESS;
 
+#ifdef __linux__
+   if (vk_sync_type_is_drm_syncobj(wait->sync->type))
+      return dzn_queue_wait_drm_syncobj(queue, wait);
+#endif
+
    struct dzn_device *device = container_of(queue->vk.base.device, struct dzn_device, vk);
-   assert(wait->sync->type == &dzn_sync_type);
+   assert(wait->sync->type->init == dzn_sync_type.init);
    struct dzn_sync *sync = container_of(wait->sync, struct dzn_sync, vk);
    uint64_t value =
       (sync->vk.flags & VK_SYNC_IS_TIMELINE) ? wait->wait_value : 1;
@@ -2113,7 +2306,7 @@ dzn_queue_sync_signal(struct dzn_queue *queue, const struct vk_sync_signal *sign
       return VK_SUCCESS;
 
    struct dzn_device *device = container_of(queue->vk.base.device, struct dzn_device, vk);
-   assert(signal->sync->type == &dzn_sync_type);
+   assert(signal->sync->type->init == dzn_sync_type.init);
    struct dzn_sync *sync = container_of(signal->sync, struct dzn_sync, vk);
    uint64_t value =
       (sync->vk.flags & VK_SYNC_IS_TIMELINE) ? signal->signal_value : 1;
@@ -2186,11 +2379,32 @@ dzn_queue_submit(struct vk_queue *q,
       }
    }
 
+#ifdef __linux__
+   int signal_file = -1;
+#endif
    for (uint32_t i = 0; i < info->signal_count; i++) {
+#ifdef __linux__
+      if (vk_sync_type_is_drm_syncobj(info->signals[i].sync->type)) {
+         /* All syncobjs get the queue fence value signalled below. */
+         if (signal_file < 0)
+            result = dzn_queue_fence_sync_file(queue, queue->fence_point + 1, &signal_file);
+         if (result == VK_SUCCESS)
+            result = dzn_queue_signal_drm_syncobj(queue, &info->signals[i], signal_file);
+         if (result != VK_SUCCESS)
+            break;
+         continue;
+      }
+#endif
       result = dzn_queue_sync_signal(queue, &info->signals[i]);
       if (result != VK_SUCCESS)
-         return vk_error(device, VK_ERROR_UNKNOWN);
+         break;
    }
+#ifdef __linux__
+   if (signal_file >= 0)
+      close(signal_file);
+#endif
+   if (result != VK_SUCCESS)
+      return result;
 
    if (FAILED(ID3D12CommandQueue_Signal(queue->cmdqueue, queue->fence, ++queue->fence_point)))
       return vk_error(device, VK_ERROR_UNKNOWN);
@@ -2201,6 +2415,14 @@ dzn_queue_submit(struct vk_queue *q,
 static void
 dzn_queue_finish(struct dzn_queue *queue)
 {
+#ifdef __linux__
+   if (queue->bridge_fence) {
+      util_queue_finish(&queue->bridge_queue);
+      util_queue_destroy(&queue->bridge_queue);
+      ID3D12Fence_Release(queue->bridge_fence);
+   }
+#endif
+
    if (queue->cmdqueue)
       ID3D12CommandQueue_Release(queue->cmdqueue);
 
@@ -2435,6 +2657,11 @@ dzn_device_create(struct dzn_physical_device *pdev,
     */
    device->vk.command_dispatch_table = &device->cmd_dispatch;
    device->vk.check_status = dzn_device_check_status;
+#ifdef __linux__
+   /* The provider borrows the fd, the physical device keeps it open. */
+   if (pdev->dxgdrm_fd >= 0)
+      vk_device_set_drm_fd(&device->vk, pdev->dxgdrm_fd);
+#endif
 
    device->dev = pdev->dev;
 
