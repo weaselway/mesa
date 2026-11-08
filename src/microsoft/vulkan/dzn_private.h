@@ -59,6 +59,10 @@
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_icd.h>
 
+#ifdef __linux__
+#include <sys/types.h>
+#endif
+
 #include <unknwn.h>
 #include <directx/d3d12.h>
 
@@ -225,6 +229,13 @@ struct dzn_physical_device {
    const struct vk_sync_type *sync_types[MAX_SYNC_TYPES + 1];
    float timestamp_period;
    bool support_a4b4g4r4;
+#ifdef __linux__
+   /* The dxgdrm render node, if this is the adapter a d3d12 compositor runs
+    * on and dxgdrm can turn shared handles into dma-bufs (1.1), else -1. */
+   int dxgdrm_fd;
+   dev_t dxgdrm_render_devid;
+   dev_t dxgdrm_primary_devid;
+#endif
 };
 
 D3D12_FEATURE_DATA_FORMAT_SUPPORT
