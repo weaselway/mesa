@@ -55,10 +55,12 @@ get_timeline_mode(struct vk_physical_device *physical_device)
    const struct vk_sync_type *timeline_type = NULL;
    for (const struct vk_sync_type *const *t =
         physical_device->supported_sync_types; *t; t++) {
+      /* The first timeline type decides the mode.  Later ones are only
+       * picked for external handle types the first one cannot export.
+       */
       if ((*t)->features & VK_SYNC_FEATURE_TIMELINE) {
-         /* We can only have one timeline mode */
-         assert(timeline_type == NULL);
          timeline_type = *t;
+         break;
       }
    }
 
