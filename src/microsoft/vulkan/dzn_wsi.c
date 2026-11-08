@@ -24,6 +24,24 @@
 #include "dzn_private.h"
 #include "vk_util.h"
 
+#ifdef __linux__
+#include <sys/stat.h>
+
+/* X11 DRI3 hands out the dxgdrm node, which has no PCI bus info to match. */
+static bool
+dzn_wsi_can_present_on_device(VkPhysicalDevice physicalDevice, int fd)
+{
+   VK_FROM_HANDLE(dzn_physical_device, pdev, physicalDevice);
+   struct stat st;
+
+   if (pdev->dxgdrm_fd < 0 || fstat(fd, &st))
+      return false;
+
+   return st.st_rdev == pdev->dxgdrm_render_devid ||
+          st.st_rdev == pdev->dxgdrm_primary_devid;
+}
+#endif
+
 static PFN_vkVoidFunction VKAPI_PTR
 dzn_wsi_proc_addr(VkPhysicalDevice physicalDevice, const char *pName)
 {
@@ -89,6 +107,9 @@ dzn_wsi_init(struct dzn_physical_device *physical_device)
 
 #ifdef _WIN32
    bool sw = false;
+#elif defined(__linux__)
+   /* Without dxgdrm there are no dma-bufs, so present through shm. */
+   bool sw = physical_device->dxgdrm_fd < 0;
 #else
    bool sw = true;
 #endif
@@ -110,6 +131,10 @@ dzn_wsi_init(struct dzn_physical_device *physical_device)
    physical_device->wsi_device.win32.create_image_memory =
       dzn_wsi_create_image_memory;
    physical_device->wsi_device.supports_modifiers = false;
+#ifdef __linux__
+   physical_device->wsi_device.can_present_on_device =
+      dzn_wsi_can_present_on_device;
+#endif
    physical_device->vk.wsi_device = &physical_device->wsi_device;
 
    return VK_SUCCESS;
