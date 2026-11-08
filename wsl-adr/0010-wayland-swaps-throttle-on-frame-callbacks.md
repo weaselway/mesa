@@ -1,6 +1,6 @@
 # 0010. Wayland swaps always wait for the frame callback, for at most a second
 
-Status: Accepted
+Status: Interval 0 superseded by 0014; the one-second limit stays
 
 ## Context
 
