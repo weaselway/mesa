@@ -2957,6 +2957,8 @@ dzn_device_memory_create(struct dzn_device *device,
 
    VkExternalMemoryHandleTypeFlags export_flags = 0;
    HANDLE import_handle = NULL;
+   /* Not import_handle != NULL: on Linux it is an fd, and 0 is valid. */
+   bool imported = false;
    bool imported_from_d3d11 = false;
    void *host_pointer = NULL;
 #ifdef _WIN32
@@ -2989,6 +2991,7 @@ dzn_device_memory_create(struct dzn_device *device,
          }
          import_handle = imp->handle;
          import_name = imp->name;
+         imported = true;
          break;
       }
       case VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_KHR:
@@ -3013,6 +3016,7 @@ dzn_device_memory_create(struct dzn_device *device,
             return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
          }
          import_handle = (HANDLE)(intptr_t)imp->fd;
+         imported = true;
          break;
       }
 #endif
@@ -3137,7 +3141,7 @@ dzn_device_memory_create(struct dzn_device *device,
 #else
       goto cleanup;
 #endif
-   } else if (import_handle) {
+   } else if (imported) {
       error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
       if (image || buffer) {
          if (FAILED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res)))
@@ -3296,6 +3300,12 @@ dzn_device_memory_create(struct dzn_device *device,
       }
 #endif
    }
+
+#ifndef _WIN32
+   /* A successful fd import takes ownership; D3D12 keeps its own reference. */
+   if (imported)
+      close((int)(intptr_t)import_handle);
+#endif
 
    *out = dzn_device_memory_to_handle(mem);
    return VK_SUCCESS;
