@@ -59,6 +59,14 @@
 #include "dzn_dxgi.h"
 #endif
 
+#ifdef __linux__
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <unistd.h>
+#include <xf86drm.h>
+#include "wsl_dxgdrm.h"
+#endif
+
 #define DZN_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
 
 #define MAX_TIER2_MEMORY_TYPES 4
@@ -222,6 +230,11 @@ dzn_physical_device_release(struct dzn_physical_device *pdev)
 
    if (pdev->adapter)
       IUnknown_Release(pdev->adapter);
+
+#ifdef __linux__
+   if (pdev->dxgdrm_fd >= 0)
+      close(pdev->dxgdrm_fd);
+#endif
 }
 
 static void
@@ -1100,6 +1113,19 @@ dzn_physical_device_get_properties(const struct dzn_physical_device *pdev,
    }
    memcpy(properties->pipelineCacheUUID,
           pdev->pipeline_cache_uuid, VK_UUID_SIZE);
+
+#ifdef __linux__
+   /* What WSI compares with the compositor's device to decide whether the
+    * buffers can be shared directly. */
+   if (pdev->dxgdrm_fd >= 0) {
+      properties->drmHasPrimary = true;
+      properties->drmPrimaryMajor = major(pdev->dxgdrm_primary_devid);
+      properties->drmPrimaryMinor = minor(pdev->dxgdrm_primary_devid);
+      properties->drmHasRender = true;
+      properties->drmRenderMajor = major(pdev->dxgdrm_render_devid);
+      properties->drmRenderMinor = minor(pdev->dxgdrm_render_devid);
+   }
+#endif
    memcpy(properties->driverUUID, pdev->driver_uuid, VK_UUID_SIZE);
    memcpy(properties->deviceUUID, pdev->device_uuid, VK_UUID_SIZE);
    memcpy(properties->deviceLUID, &pdev->desc.adapter_luid, VK_LUID_SIZE);
@@ -1109,6 +1135,42 @@ dzn_physical_device_get_properties(const struct dzn_physical_device *pdev,
    snprintf(properties->driverName, VK_MAX_DRIVER_NAME_SIZE, "Dozen");
    snprintf(properties->driverInfo, VK_MAX_DRIVER_INFO_SIZE, "Mesa " PACKAGE_VERSION MESA_GIT_SHA1);
 }
+
+#ifdef __linux__
+/* Only the default adapter gets the node: dxgdrm has one node for all
+ * adapters, and a d3d12 compositor opens client buffers on its default
+ * adapter, so only buffers from that one can be handed over directly. */
+static void
+dzn_physical_device_init_dxgdrm(struct dzn_physical_device *pdev)
+{
+   pdev->dxgdrm_fd = -1;
+   if (!pdev->desc.is_default)
+      return;
+
+   int fd = wsl_open_dxgdrm_node(1);
+   if (fd < 0)
+      return;
+
+   drmDevicePtr drm_dev;
+   struct stat render_st, primary_st;
+   if (drmGetDevice2(fd, 0, &drm_dev)) {
+      close(fd);
+      return;
+   }
+   bool found = (drm_dev->available_nodes & (1 << DRM_NODE_PRIMARY)) &&
+                !stat(drm_dev->nodes[DRM_NODE_PRIMARY], &primary_st) &&
+                !fstat(fd, &render_st);
+   drmFreeDevice(&drm_dev);
+   if (!found) {
+      close(fd);
+      return;
+   }
+
+   pdev->dxgdrm_fd = fd;
+   pdev->dxgdrm_render_devid = render_st.st_rdev;
+   pdev->dxgdrm_primary_devid = primary_st.st_rdev;
+}
+#endif
 
 static VkResult
 dzn_physical_device_create(struct vk_instance *instance,
@@ -1140,6 +1202,9 @@ dzn_physical_device_create(struct vk_instance *instance,
    }
 
    pdev->desc = *desc;
+#ifdef __linux__
+   dzn_physical_device_init_dxgdrm(pdev);
+#endif
    pdev->adapter = adapter;
    IUnknown_AddRef(adapter);
    list_addtail(&pdev->vk.link, &instance->physical_devices.list);
@@ -1187,6 +1252,9 @@ dzn_physical_device_create(struct vk_instance *instance,
       pdev->options3.ViewInstancingTier = D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED;
 
    dzn_physical_device_get_extensions(pdev);
+#ifdef __linux__
+   pdev->vk.supported_extensions.EXT_physical_device_drm = pdev->dxgdrm_fd >= 0;
+#endif
    if (dzn_instance->drirc.debug.enable_8bit_loads_stores &&
        pdev->options4.Native16BitShaderOpsSupported)
       pdev->vk.supported_extensions.KHR_8bit_storage = true;
