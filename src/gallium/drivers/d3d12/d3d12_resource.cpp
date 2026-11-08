@@ -44,6 +44,7 @@
 #include <unistd.h>
 #include <xf86drm.h>
 #include "drm-uapi/drm_fourcc.h"
+#include "drm-uapi/dxgdrm_drm.h"
 #endif
 #include <memory>
 
@@ -752,7 +753,19 @@ d3d12_resource_from_handle(struct pipe_screen *pscreen,
       obj->Release();
 #endif
    } else {
+#ifndef _WIN32
+      /* dzn hands out a dma-buf that wraps the shared handle, so it can carry
+       * implicit fences (dxgdrm ADR 0021). Anything else is opened as is. */
+      struct drm_dxgdrm_dmabuf_to_shared args = { (int)handle->handle, -1 };
+      if (handle->type == WINSYS_HANDLE_TYPE_FD && screen->dxgdrm_fd >= 0 &&
+          drmIoctl(screen->dxgdrm_fd, DRM_IOCTL_DXGDRM_DMABUF_TO_SHARED, &args) == 0)
+         d3d_handle = (HANDLE)(intptr_t)args.shared_fd;
+#endif
       screen->dev->OpenSharedHandle(d3d_handle, IID_PPV_ARGS(&d3d12_res));
+#ifndef _WIN32
+      if (args.shared_fd >= 0)
+         close(args.shared_fd);
+#endif
    }
 
 #ifdef _WIN32
