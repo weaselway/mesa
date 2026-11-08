@@ -24,9 +24,9 @@
 #include "d3d12_screen.h"
 
 #ifndef _WIN32
-#include <fcntl.h>
 #include <unistd.h>
 #include <xf86drm.h>
+#include "wsl_dxgdrm.h"
 #endif
 
 #include "d3d12_bufmgr.h"
@@ -1432,46 +1432,6 @@ d3d12_query_memory_info(struct pipe_screen *pscreen, struct pipe_memory_info *in
 }
 
 #ifndef _WIN32
-/* Find the dxgdrm render node, if the module is loaded. Matching on the driver
- * name rather than taking the first node keeps this from grabbing a real GPU on
- * a machine that has one. Returns -1 when there is none, which is not an error:
- * everything still works, fences are just eventfds and cannot be imported into
- * a syncobj. */
-static int
-d3d12_open_dxgdrm_node(void)
-{
-   drmDevicePtr devices[8];
-   /* drmGetDevices2() returns the total count, which can exceed what it
-    * stored. */
-   int num_devs = MIN2(drmGetDevices2(0, devices, ARRAY_SIZE(devices)),
-                       (int)ARRAY_SIZE(devices));
-   int fd = -1;
-
-   for (int i = 0; i < num_devs && fd < 0; i++) {
-      if (!(devices[i]->available_nodes & (1 << DRM_NODE_RENDER)))
-         continue;
-
-      int try_fd = open(devices[i]->nodes[DRM_NODE_RENDER],
-                        O_RDWR | O_CLOEXEC);
-      if (try_fd < 0)
-         continue;
-
-      drmVersionPtr version = drmGetVersion(try_fd);
-      if (version) {
-         if (!strcmp(version->name, "dxgdrm"))
-            fd = try_fd;
-         drmFreeVersion(version);
-      }
-      if (fd != try_fd)
-         close(try_fd);
-   }
-
-   if (num_devs > 0)
-      drmFreeDevices(devices, num_devs);
-
-   return fd;
-}
-
 /* Use the dxgdrm node the pipe loader already opened (fd >= 0), or look for
  * one. The screen owns a dup, so the loader can close its fd whenever. */
 void
@@ -1486,7 +1446,9 @@ d3d12_screen_init_dxgdrm(struct d3d12_screen *screen, int fd)
       if (screen->dxgdrm_is_kms)
          d3d12_screen_resource_init_kms(&screen->base);
    } else {
-      screen->dxgdrm_fd = d3d12_open_dxgdrm_node();
+      /* None is not an error: fences are then just eventfds and cannot be
+       * imported into a syncobj. */
+      screen->dxgdrm_fd = wsl_open_dxgdrm_node(0);
    }
 }
 #endif
