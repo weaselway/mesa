@@ -24,9 +24,11 @@ module in dxgdrm's `docs/adr`. They are referred to as "weaselway NNNN" and
 | [0007](0007-software-device-reports-the-dxgdrm-node.md) | EGL's software device reports the dxgdrm render node for d3d12 | Accepted |
 | [0008](0008-scanout-buffers-get-gem-handles.md) | Scanout buffers on the dxgdrm KMS node get GEM handles | Accepted |
 | [0009](0009-async-readback-by-texture-to-buffer-copy.md) | `glReadPixels` into a PBO copies texture to buffer, asynchronously | Accepted |
-| [0010](0010-wayland-swaps-throttle-on-frame-callbacks.md) | Wayland swaps always wait for the frame callback, for at most a second | Accepted |
+| [0010](0010-wayland-swaps-throttle-on-frame-callbacks.md) | Wayland swaps always wait for the frame callback, for at most a second | Interval 0 superseded by 0014 |
 | [0011](0011-opaque-10-bit-format.md) | The opaque 10-bit format borrows the A2 DXGI format | Accepted |
 | [0012](0012-context-priorities-through-a-got-hook.md) | GPU priorities are set on dxgkrnl contexts, through a GOT hook | Accepted |
+| [0013](0013-dzn-presents-through-dma-bufs.md) | dzn presents through dma-bufs from dxgdrm, synced through DRM syncobjs | Accepted |
+| [0014](0014-wayland-swap-interval-0-is-unthrottled.md) | Wayland swaps at interval 0 do not wait for the frame callback | Accepted |
 
 ## Known risks
 
@@ -44,11 +46,15 @@ Found while writing these records, details in the linked files:
   ([0003](0003-shared-handles-as-dma-bufs.md)).
 - Some changes affect every driver: the relaxed `sync_valid_fd()`
   ([0005](0005-fence-fds-are-sync-files-from-dxgdrm.md)) and the Wayland swap
-  throttle ([0010](0010-wayland-swaps-throttle-on-frame-callbacks.md)). They
+  timeout ([0010](0010-wayland-swaps-throttle-on-frame-callbacks.md)). They
   cannot go upstream as they are.
 - The software device's render node is chosen from environment variables,
   not from the driver actually loaded
   ([0007](0007-software-device-reports-the-dxgdrm-node.md)).
+- On the compositor's adapter, dzn's `OPAQUE_FD` semaphores are DRM
+  syncobjs, not D3D12 shared handles, and Vulkan clients on other adapters
+  still present through shm
+  ([0013](0013-dzn-presents-through-dma-bufs.md)).
 - GPU priorities rely on patching the GOT of `libd3d12core.so`, and stop
   working (at the default priority) if a WSL update links it differently
   ([0012](0012-context-priorities-through-a-got-hook.md)).
