@@ -64,6 +64,7 @@
 #include <sys/sysmacros.h>
 #include <unistd.h>
 #include <xf86drm.h>
+#include "util/os_file.h"
 #include "wsl_dxgdrm.h"
 #endif
 
@@ -3889,16 +3890,18 @@ dzn_GetMemoryFdKHR(VkDevice device,
                    int *pFd)
 {
    VK_FROM_HANDLE(dzn_device_memory, mem, pGetFdInfo->memory);
-   if (!mem->export_handle)
+   /* -1 when the memory was not allocated for export. */
+   if ((intptr_t)mem->export_handle < 0)
       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
 
    switch (pGetFdInfo->handleType) {
    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT:
    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT:
    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP_BIT:
-      *pFd = (int)(intptr_t)mem->export_handle;
-      mem->export_handle = (HANDLE)(intptr_t)-1;
-      return VK_SUCCESS;
+      /* Every call gets an fd of its own, as the spec asks; the memory keeps
+       * its handle until it is freed. */
+      *pFd = os_dupfd_cloexec((int)(intptr_t)mem->export_handle);
+      return *pFd >= 0 ? VK_SUCCESS : vk_error(device, VK_ERROR_TOO_MANY_OBJECTS);
    default:
       return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
    }
