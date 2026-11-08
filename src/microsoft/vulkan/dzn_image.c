@@ -203,8 +203,15 @@ dzn_image_create(struct dzn_device *device,
          (pCreateInfo->samples > 1 ? D3D12_BARRIER_ACCESS_RESOLVE_SOURCE : 0);
    }
 
-   if ((image->vk.create_flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) &&
-       !pdev->options12.RelaxedFormatCastingSupported)
+   /* The d3d12 importer takes its own format for the DRM fourcc or the
+    * typeless one, so a dma-buf of an sRGB image has to be typeless. */
+   const VkExternalMemoryImageCreateInfo *external_info =
+      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
+   bool dma_buf = external_info &&
+      (external_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT);
+
+   if (((image->vk.create_flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) &&
+        !pdev->options12.RelaxedFormatCastingSupported) || dma_buf)
       image->desc.Format = dzn_get_typeless_dxgi_format(image->desc.Format);
 
    if (image->desc.SampleDesc.Count > 1)
