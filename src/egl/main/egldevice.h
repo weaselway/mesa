@@ -73,6 +73,9 @@ enum _egl_device_extension {
 #ifdef HAVE_LIBDRM
 drmDevicePtr
 _eglDeviceDrm(struct _egl_device *dev);
+
+void
+_eglNoteD3D12Screen(void);
 #else
 #define _eglDeviceDrm(dev) NULL
 #endif
