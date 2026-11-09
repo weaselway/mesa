@@ -37,6 +37,8 @@ static create_context_fn real_create;
 static destroy_context_fn real_destroy;
 static set_priority_fn set_priority;
 static bool debug;
+/* Our hook calls another Mesa driver's copy of it, which runs first. */
+static bool chained;
 
 static simple_mtx_t lock = SIMPLE_MTX_INITIALIZER;
 static struct context *contexts;
@@ -87,7 +89,12 @@ hook_create_context(struct d3dkmt_createcontextvirtual *args)
 
    bool pinned = pending != D3DKMT_PRIORITY_NONE;
    contexts[context_count++] = (struct context) {args->context.v, pinned};
-   apply(args->context.v, pinned ? pending : process_priority());
+   /* When chained, the other copy has set a priority already, maybe one its
+    * driver pinned. Keep it unless we pinned the context or our driver asked
+    * for a priority. shortcut: a later request still re-applies to the other
+    * copy's pinned contexts; sharing one state between copies would fix it. */
+   if (pinned || !chained || requested != D3DKMT_PRIORITY_NONE)
+      apply(args->context.v, pinned ? pending : process_priority());
    simple_mtx_unlock(&lock);
    return status;
 }
@@ -150,6 +157,7 @@ install(void)
    set_priority = (set_priority_fn)dlsym(core, "D3DKMTSetContextSchedulingPriority");
    real_create = (create_context_fn)resolve(core, lm, *create_slot, "D3DKMTCreateContextVirtual");
    real_destroy = (destroy_context_fn)resolve(core, lm, *destroy_slot, "D3DKMTDestroyContext");
+   chained = (void *)real_create != dlsym(core, "D3DKMTCreateContextVirtual");
    if (!set_priority || !real_create || !real_destroy) {
       mesa_logw("d3dkmt: context functions not found in libdxcore.so, priorities disabled");
       return;
