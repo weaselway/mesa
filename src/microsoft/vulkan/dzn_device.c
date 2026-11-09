@@ -69,6 +69,8 @@
 #include <libsync.h>
 #include "drm-uapi/dxgdrm_drm.h"
 #include "util/os_file.h"
+#include "util/os_time.h"
+#include "util/u_atomic.h"
 #include "vk_drm_syncobj.h"
 #include "wsl_dxgdrm.h"
 #include "wsl_eventfd.h"
@@ -2111,6 +2113,7 @@ dzn_EnumerateInstanceLayerProperties(uint32_t *pPropertyCount,
 
 #ifdef __linux__
 struct dzn_bridge_job {
+   struct dzn_queue *queue;
    struct util_sync_provider *sync;
    ID3D12Fence *fence;
    uint64_t value;
@@ -2126,15 +2129,21 @@ dzn_bridge_job_execute(void *data, void *gdata, int thread_index)
    struct dzn_bridge_job *job = data;
    int ret;
 
-   if (job->sync_file >= 0) {
-      ret = sync_wait(job->sync_file, -1);
+   /* Wait in slices: a point that is never submitted would otherwise block
+    * dzn_queue_finish() forever. */
+   do {
+      if (job->sync_file >= 0) {
+         ret = sync_wait(job->sync_file, 100);
+      } else {
+         ret = job->sync->timeline_wait(job->sync, &job->syncobj, &job->point, 1,
+                                        os_time_get_absolute_timeout(100000000),
+                                        DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT,
+                                        NULL);
+      }
+   } while (ret && errno == ETIME && !p_atomic_read(&job->queue->bridge_abort));
+
+   if (job->sync_file >= 0)
       close(job->sync_file);
-   } else {
-      ret = job->sync->timeline_wait(job->sync, &job->syncobj, &job->point, 1,
-                                     INT64_MAX,
-                                     DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT,
-                                     NULL);
-   }
    if (ret)
       mesa_loge("dzn: waiting on a DRM syncobj failed: %s", strerror(errno));
 
@@ -2190,6 +2199,7 @@ dzn_queue_wait_drm_syncobj(struct dzn_queue *queue, const struct vk_sync_wait *w
       goto fail;
 
    *job = (struct dzn_bridge_job) {
+      .queue = queue,
       .sync = sync,
       .fence = queue->bridge_fence,
       .value = ++queue->bridge_point,
@@ -2419,6 +2429,7 @@ dzn_queue_finish(struct dzn_queue *queue)
 {
 #ifdef __linux__
    if (queue->bridge_fence) {
+      p_atomic_set(&queue->bridge_abort, true);
       util_queue_finish(&queue->bridge_queue);
       util_queue_destroy(&queue->bridge_queue);
       ID3D12Fence_Release(queue->bridge_fence);
