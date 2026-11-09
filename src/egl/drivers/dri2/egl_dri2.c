@@ -839,6 +839,13 @@ dri2_create_screen(_EGLDisplay *disp)
    if (dri2_dpy->fd_render_gpu == dri2_dpy->fd_display_gpu)
       dri2_dpy->dri_screen_display_gpu = dri2_dpy->dri_screen_render_gpu;
 
+#ifdef HAVE_LIBDRM
+   /* Lets the software device report the dxgdrm node, see egldevice.c. */
+   struct pipe_screen *pscreen = dri_get_pipe_screen(dri2_dpy->dri_screen_render_gpu);
+   if (!strncmp(pscreen->get_name(pscreen), "D3D12", 5))
+      _eglNoteD3D12Screen();
+#endif
+
    dri2_dpy->own_dri_screen = true;
    return EGL_TRUE;
 }
