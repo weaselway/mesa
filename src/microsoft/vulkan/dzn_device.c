@@ -2224,7 +2224,9 @@ dzn_queue_fence_sync_file(struct dzn_queue *queue, uint64_t value, int *sync_fil
    if (event_fd < 0)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   /* The kernel holds its own reference on the eventfd from here on. */
+   /* dxgkrnl keeps only the eventfd_ctx, not the file. Closing our fd below
+    * is safe only because dxgdrm's fence takes its own file reference;
+    * without it the last close would wake the fence with EPOLLHUP. */
    if (FAILED(ID3D12Fence_SetEventOnCompletion(queue->fence, value,
                                                (HANDLE)(intptr_t)event_fd))) {
       close(event_fd);
