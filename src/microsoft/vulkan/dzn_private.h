@@ -281,6 +281,8 @@ struct dzn_queue {
    struct util_queue bridge_queue;
    ID3D12Fence *bridge_fence;
    uint64_t bridge_point;
+   /* Set by dzn_queue_finish() so waits for points that never come end. */
+   bool bridge_abort;
 #endif
 };
 
