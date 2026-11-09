@@ -54,9 +54,9 @@ d3d12_fence_wait_event(HANDLE event, int event_fd, uint64_t timeout_ns)
    return WaitForSingleObject(event, timeout_ms) == WAIT_OBJECT_0;
 }
 #else
-#include <sys/eventfd.h>
 #include <poll.h>
 #include <util/libsync.h>
+#include "wsl_eventfd.h"
 
 inline void
 d3d12_fence_close_event(HANDLE event, int fd)
@@ -68,7 +68,7 @@ d3d12_fence_close_event(HANDLE event, int fd)
 inline HANDLE
 d3d12_fence_create_event(int *fd)
 {
-   *fd = eventfd(0, 0);
+   *fd = wsl_eventfd(0);
    return (HANDLE)(size_t)*fd;
 }
 
