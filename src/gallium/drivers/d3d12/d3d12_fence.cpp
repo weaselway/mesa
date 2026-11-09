@@ -28,6 +28,7 @@
 #include "drm-uapi/dxgdrm_drm.h"
 #endif
 
+#include "d3d12_bufmgr.h"
 #include "d3d12_context.h"
 #include "d3d12_screen.h"
 
@@ -44,6 +45,9 @@ destroy_fence(struct d3d12_fence *fence)
       d3d12_fence_close_event(fence->event, fence->event_fd);
    else
       fence->cmdqueue_fence->Release();
+   util_dynarray_foreach(&fence->exported_writes, struct d3d12_bo *, bo)
+      d3d12_bo_unreference(*bo);
+   util_dynarray_fini(&fence->exported_writes);
    FREE(fence);
 }
 
@@ -289,7 +293,8 @@ fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
          /* Only a real sync_file lets the compositor wait on the fence; an
           * eventfd dup can't be imported, so the frame-end stall in
           * d3d12_flush_cmdlist() must stay on for the fallback below. */
-         p_atomic_set(&screen->exports_fence_fds, true);
+         util_dynarray_foreach(&fence->exported_writes, struct d3d12_bo *, bo)
+            p_atomic_set(&(*bo)->explicit_sync, true);
          return args.fd;
       }
       /* Fall through: an eventfd is still better than no fence at all. */
