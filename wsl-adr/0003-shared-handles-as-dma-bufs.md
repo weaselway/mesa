@@ -33,6 +33,10 @@ became exactly that request.
   (0013). The d3d12 importer asks dxgdrm for the handle first, so it takes
   both kinds. d3d12's own exports are still plain shared handles.
 - Chromium's scanout buffers allocate.
+- A texture created without `PIPE_BIND_SHARED` cannot be exported, because
+  `CreateSharedHandle` fails for it. `eglExportDMABUFImageMESA` reports this
+  as `EGL_BAD_ALLOC`. It used to return success without setting the fds, and
+  GTK then closed whatever its uninitialized fd array held.
 - `DMA_BUF_IOCTL_IMPORT_SYNC_FILE` and the other dma-buf ioctls fail on these
   fds, so implicit sync is not available (see 0004).
 - On the dxgdrm KMS node, scanout buffers follow 0008 instead.
