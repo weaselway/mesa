@@ -34,6 +34,7 @@
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -173,17 +174,27 @@ static inline int sync_merge(const char *name, int fd1, int fd2)
  * reached through /dev/dxg, which has no dma_fence to wrap, and the kernel here
  * is built without CONFIG_SW_SYNC so userspace cannot mint one either. They are
  * still waitable with poll(), which is all sync_wait() and its callers do, so
- * accept any live fd rather than demanding SYNC_IOC_FILE_INFO. The stricter
- * check only fires in debug builds, where it aborts the process.
+ * accept eventfds as well as sync_files. Without /proc to tell, any live fd
+ * passes.
  */
 static inline bool
 sync_valid_fd(int fd)
 {
+	static const char eventfd_link[] = "anon_inode:[eventfd]";
 	struct sync_file_info info = {{0}};
+	char path[32], link[sizeof(eventfd_link)];
+	ssize_t len;
+
 	if (ioctl(fd, SYNC_IOC_FILE_INFO, &info) >= 0)
 		return true;
 
-	return fcntl(fd, F_GETFD) != -1;
+	snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+	len = readlink(path, link, sizeof(link));
+	if (len < 0)
+		return fcntl(fd, F_GETFD) != -1;
+
+	return len == sizeof(eventfd_link) - 1 &&
+	       memcmp(link, eventfd_link, len) == 0;
 }
 
 static inline struct sync_file_info* sync_file_info(int32_t fd)
