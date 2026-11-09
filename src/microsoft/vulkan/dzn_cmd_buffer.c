@@ -1795,7 +1795,10 @@ dzn_cmd_buffer_alloc_internal_buf(struct dzn_cmd_buffer *cmdbuf,
 
    D3D12_HEAP_PROPERTIES hprops = dzn_ID3D12Device4_GetCustomHeapProperties(device->dev, 0, heap_type);
 #ifndef _WIN32
-   /* WSL maps write-combined memory at ~12 MB/s, write-back is fine on UMA. */
+   /* WSL maps write-combined memory at ~12 MB/s, write-back is fine on UMA.
+    * Upstream only uses write-back with CacheCoherentUMA; a UMA GPU that does
+    * not snoop CPU caches could read stale uploads. Intel iGPUs snoop.
+    * TODO: find out why the Arc B390 reports UMA but not CacheCoherentUMA. */
    struct dzn_physical_device *pdev =
       container_of(device->vk.physical, struct dzn_physical_device, vk);
    if (heap_type == D3D12_HEAP_TYPE_UPLOAD && pdev->architecture.UMA)
