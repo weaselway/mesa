@@ -33,11 +33,14 @@
 #include "d3d12_compiler.h"
 #include "d3d12_context.h"
 #include "d3d12_screen.h"
+#include "d3d12_root_signature.h"
 #ifndef _GAMING_XBOX
 #include <directx/d3dx12_pipeline_state_stream.h>
 #endif
 
+#include "util/disk_cache.h"
 #include "util/hash_table.h"
+#include "util/mesa-blake3.h"
 #include "util/set.h"
 #include "util/u_memory.h"
 #include "util/u_prim.h"
@@ -286,6 +289,133 @@ copy_input_attribs(const D3D12_INPUT_ELEMENT_DESC *ves_elements, D3D12_INPUT_ELE
    }
 }
 
+#define HASH_VALUE(h, v) _mesa_blake3_update(h, &(v), sizeof(v))
+
+static void
+hash_string(blake3_hasher *h, const char *str)
+{
+   str = str ? str : "";
+   _mesa_blake3_update(h, str, strlen(str) + 1);
+}
+
+static void
+hash_bytecode(blake3_hasher *h, const D3D12_SHADER_BYTECODE &bytecode)
+{
+   HASH_VALUE(h, bytecode.BytecodeLength);
+   _mesa_blake3_update(h, bytecode.pShaderBytecode, bytecode.BytecodeLength);
+}
+
+static bool
+hash_root_signature(blake3_hasher *h, ID3D12RootSignature *sig)
+{
+   struct d3d12_root_signature_key key;
+   UINT size = sizeof(key);
+   if (FAILED(sig->GetPrivateData(d3d12_root_signature_key_guid, &size, &key)) ||
+       size != sizeof(key))
+      return false;
+   HASH_VALUE(h, key);
+   return true;
+}
+
+static void
+finish_pso_key(struct d3d12_screen *screen, blake3_hasher *h, cache_key key)
+{
+   blake3_hash hash;
+   _mesa_blake3_final(h, hash);
+   disk_cache_compute_key(screen->pso_cache, hash, sizeof(hash), key);
+}
+
+static void
+store_pso_blob(struct d3d12_screen *screen, ID3D12PipelineState *pso, const cache_key key)
+{
+   ID3DBlob *blob;
+   if (FAILED(pso->GetCachedBlob(&blob)))
+      return;
+   disk_cache_put(screen->pso_cache, key, blob->GetBufferPointer(), blob->GetBufferSize(), NULL);
+   blob->Release();
+}
+
+/* Hashes everything the description points to. The blend and depth-stencil
+ * descs have padding, so they are hashed from their zero-allocated CSOs,
+ * not from the copies in pso_desc. */
+static bool
+gfx_pso_key(struct d3d12_screen *screen, const struct d3d12_gfx_pipeline_state *state,
+            CD3DX12_PIPELINE_STATE_STREAM3 &pso_desc, cache_key key)
+{
+   blake3_hasher h;
+   _mesa_blake3_init(&h);
+   if (!hash_root_signature(&h, state->root_signature))
+      return false;
+
+   hash_bytecode(&h, pso_desc.VS);
+   hash_bytecode(&h, pso_desc.HS);
+   hash_bytecode(&h, pso_desc.DS);
+   hash_bytecode(&h, pso_desc.GS);
+   hash_bytecode(&h, pso_desc.PS);
+
+   const D3D12_STREAM_OUTPUT_DESC &so = pso_desc.StreamOutput;
+   HASH_VALUE(&h, so.NumEntries);
+   for (UINT i = 0; i < so.NumEntries; i++) {
+      const D3D12_SO_DECLARATION_ENTRY &e = so.pSODeclaration[i];
+      HASH_VALUE(&h, e.Stream);
+      hash_string(&h, e.SemanticName);
+      HASH_VALUE(&h, e.SemanticIndex);
+      HASH_VALUE(&h, e.StartComponent);
+      HASH_VALUE(&h, e.ComponentCount);
+      HASH_VALUE(&h, e.OutputSlot);
+   }
+   HASH_VALUE(&h, so.NumStrides);
+   _mesa_blake3_update(&h, so.pBufferStrides, so.NumStrides * sizeof(*so.pBufferStrides));
+   HASH_VALUE(&h, so.RasterizedStream);
+
+   HASH_VALUE(&h, state->blend->desc);
+   HASH_VALUE(&h, state->has_float_rtv);
+   HASH_VALUE(&h, state->zsa->desc);
+   const UINT &sample_mask = pso_desc.SampleMask;
+   HASH_VALUE(&h, sample_mask);
+   const D3D12_RASTERIZER_DESC &rast = pso_desc.RasterizerState;
+   HASH_VALUE(&h, rast);
+
+   const D3D12_INPUT_LAYOUT_DESC &layout = pso_desc.InputLayout;
+   HASH_VALUE(&h, layout.NumElements);
+   for (UINT i = 0; i < layout.NumElements; i++) {
+      const D3D12_INPUT_ELEMENT_DESC &e = layout.pInputElementDescs[i];
+      hash_string(&h, e.SemanticName);
+      _mesa_blake3_update(&h, &e.SemanticIndex, sizeof(e) - offsetof(D3D12_INPUT_ELEMENT_DESC, SemanticIndex));
+   }
+
+   const D3D12_INDEX_BUFFER_STRIP_CUT_VALUE &cut = pso_desc.IBStripCutValue;
+   HASH_VALUE(&h, cut);
+   const D3D12_PRIMITIVE_TOPOLOGY_TYPE &topology = pso_desc.PrimitiveTopologyType;
+   HASH_VALUE(&h, topology);
+   const D3D12_RT_FORMAT_ARRAY &rts = pso_desc.RTVFormats;
+   HASH_VALUE(&h, rts.NumRenderTargets);
+   _mesa_blake3_update(&h, rts.RTFormats, rts.NumRenderTargets * sizeof(rts.RTFormats[0]));
+   const DXGI_FORMAT &dsv = pso_desc.DSVFormat;
+   HASH_VALUE(&h, dsv);
+   const DXGI_SAMPLE_DESC &samples = pso_desc.SampleDesc;
+   HASH_VALUE(&h, samples);
+
+   finish_pso_key(screen, &h, key);
+   return true;
+}
+
+static HRESULT
+create_gfx_pso(struct d3d12_screen *screen, CD3DX12_PIPELINE_STATE_STREAM3 &pso_desc,
+               ID3D12PipelineState **pso)
+{
+   if (screen->opts14.IndependentFrontAndBackStencilRefMaskSupported) {
+      D3D12_PIPELINE_STATE_STREAM_DESC pso_stream_desc{
+          sizeof(pso_desc),
+          &pso_desc
+      };
+      return screen->dev->CreatePipelineState(&pso_stream_desc, IID_PPV_ARGS(pso));
+   }
+
+   D3D12_GRAPHICS_PIPELINE_STATE_DESC v0desc = pso_desc.GraphicsDescV0();
+   return screen->dev->CreateGraphicsPipelineState(&v0desc, IID_PPV_ARGS(pso));
+}
+
 static ID3D12PipelineState *
 create_gfx_pipeline_state(struct d3d12_context *ctx)
 {
@@ -407,28 +537,32 @@ create_gfx_pipeline_state(struct d3d12_context *ctx)
 
    pso_desc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
 
-   ID3D12PipelineState *ret;
+   ID3D12PipelineState *ret = NULL;
+   HRESULT hr = E_FAIL;
 
-   HRESULT hr;
-   if (screen->opts14.IndependentFrontAndBackStencilRefMaskSupported) {
-      D3D12_PIPELINE_STATE_STREAM_DESC pso_stream_desc{
-          sizeof(pso_desc),
-          &pso_desc
-      };
+   cache_key key;
+   bool cacheable = screen->pso_cache && gfx_pso_key(screen, state, pso_desc, key);
+   if (cacheable) {
+      size_t size;
+      void *blob = disk_cache_get(screen->pso_cache, key, &size);
+      if (blob) {
+         cached_pso.pCachedBlob = blob;
+         cached_pso.CachedBlobSizeInBytes = size;
+         /* A stale blob (new driver or runtime) fails; build without it. */
+         hr = create_gfx_pso(screen, pso_desc, &ret);
+         cached_pso.pCachedBlob = NULL;
+         cached_pso.CachedBlobSizeInBytes = 0;
+         free(blob);
+      }
+   }
 
-      if (FAILED(hr = screen->dev->CreatePipelineState(&pso_stream_desc,
-                                                       IID_PPV_ARGS(&ret)))) {
+   if (FAILED(hr)) {
+      if (FAILED(hr = create_gfx_pso(screen, pso_desc, &ret))) {
          std::_Exit(hr);
          return NULL;
       }
-   } 
-   else {
-      D3D12_GRAPHICS_PIPELINE_STATE_DESC v0desc = pso_desc.GraphicsDescV0();
-      if (FAILED(hr = screen->dev->CreateGraphicsPipelineState(&v0desc,
-                                                               IID_PPV_ARGS(&ret)))) {
-         std::_Exit(hr);
-         return NULL;
-      }
+      if (cacheable)
+         store_pso_blob(screen, ret, key);
    }
 
    return ret;
