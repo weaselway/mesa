@@ -21,6 +21,8 @@ Benchmarks that set interval 0, such as glmark2, were still capped at 60 fps.
 - glmark2 on the Intel HD 630 went from 60 to about 540 fps, and the viewer
   stayed at 60 fps.
 - An unthrottled client loads the GPU it shares with the compositor. Light
-  clients did not slow the viewer; a heavy one may.
+  clients did not slow the viewer, and neither did vkmark at 4K through dzn
+  (0013). A heavy client can still slow other clients' frames, depending on
+  the GPU's preemption (weaselway 0033).
 - The Wayland EGL code for interval 0 is upstream's again; only the timeout
   from 0010 differs.

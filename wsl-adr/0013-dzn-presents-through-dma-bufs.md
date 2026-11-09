@@ -27,7 +27,9 @@ node (dxgdrm 0008), and sync files from queue fences through eventfds
   and d3d12 share these rules in `src/microsoft/common`. Other adapters keep
   shm.
 - Memory can be exported as `DMA_BUF`. The dma-buf is made once at
-  allocation from the memory's shared handle. Images for `DMA_BUF` export get
+  allocation from the memory's shared handle. Host-visible memory cannot be
+  exported, because D3D12 cannot share heaps the CPU can map; the allocation
+  fails with `VK_ERROR_INVALID_EXTERNAL_HANDLE`. Images for `DMA_BUF` export get
   the typeless DXGI format, because the d3d12 importer accepts only that or
   its own format for the fourcc.
 - The d3d12 importer first asks dxgdrm for the shared handle behind an fd.
@@ -49,7 +51,12 @@ node (dxgdrm 0008), and sync files from queue fences through eventfds
 - vkcube MAILBOX on the compositor's adapter no longer slows the viewer:
   median 60 fps and at least 58 fps per second, against a median of 51 fps
   and a minimum of 33 fps with shm (NVIDIA 940MX, compositor on the same
-  adapter).
+  adapter). vkmark (phong, blur, desktop and texture scenes, MAILBOX and
+  FIFO, up to 4K and fullscreen) showed complete, untorn frames, no shm
+  buffers, and a viewer median of 60 fps.
+- A Vulkan client on the same GPU can still slow the frames of other clients,
+  depending on how finely the GPU preempts. That is a scheduling limit, not
+  a sync one (weaselway 0033).
 - X11 clients get DRI3 with syncobjs through Xwayland.
 - `OPAQUE_FD` semaphores on that adapter are syncobj fds, not D3D12 shared
   handles. Interop that opens them as shared handles breaks there.

@@ -5,7 +5,8 @@ Status: Accepted
 ## Context
 
 weaselway builds nixpkgs' Mesa with its `src` replaced (weaselway 0014), so
-the source has to be the Mesa release nixpkgs packages, plus the WSL changes.
+the source has to be a Mesa release that this package definition can build,
+plus the WSL changes.
 Upstream `main` moves on between releases and changes internal interfaces
 the stack touches, such as the EGL loader callbacks and the DRI screen's
 loader fields. The changes are also meant to go upstream one day, which needs
@@ -14,9 +15,10 @@ them on `main`.
 ## Decision
 
 - Every change is a commit in this repository, not a patch file in weaselway.
-- For each Mesa release that nixpkgs ships, a `mesa-X.Y.Z-wsl` branch carries
+- For each Mesa release weaselway builds, a `mesa-X.Y.Z-wsl` branch carries
   the stack on the upstream tag. weaselway's `mesa-src` input follows that
-  branch (weaselway 0015).
+  branch (weaselway 0015). The release can be newer than nixpkgs' Mesa: the
+  image builds 26.2.6 with the package definition of nixpkgs' 26.1.8.
 - `main` carries the same stack on upstream `main`, rebased when upstream
   moves. The next release branch is cut from it.
 - A change goes onto the release branch weaselway builds and onto `main`. A
