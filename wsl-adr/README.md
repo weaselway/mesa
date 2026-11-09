@@ -29,6 +29,7 @@ module in dxgdrm's `docs/adr`. They are referred to as "weaselway NNNN" and
 | [0012](0012-context-priorities-through-a-got-hook.md) | GPU priorities are set on dxgkrnl contexts, through a GOT hook | Accepted |
 | [0013](0013-dzn-presents-through-dma-bufs.md) | dzn presents through dma-bufs from dxgdrm, synced through DRM syncobjs | Accepted |
 | [0014](0014-wayland-swap-interval-0-is-unthrottled.md) | Wayland swaps at interval 0 do not wait for the frame callback | Accepted |
+| [0015](0015-pipeline-state-blobs-in-a-disk-cache.md) | d3d12 keeps pipeline state blobs in a disk cache, except on NVIDIA | Accepted |
 
 ## Known risks
 
@@ -58,5 +59,9 @@ Found while writing these records, details in the linked files:
 - GPU priorities rely on patching the GOT of `libd3d12core.so`, and stop
   working (at the default priority) if a WSL update links it differently
   ([0012](0012-context-priorities-through-a-got-hook.md)).
+- The pipeline state cache key is hashed by hand from the PSO description.
+  A field left out of it can load a blob made for other state, and D3D12
+  does not promise to reject that
+  ([0015](0015-pipeline-state-blobs-in-a-disk-cache.md)).
 - Each release branch is a separate rebase, and its commits can differ from
   those on `main` ([0001](0001-patch-stack-on-release-branches-and-main.md)).
