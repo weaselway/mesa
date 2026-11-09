@@ -2942,7 +2942,10 @@ deduce_heap_properties_from_memory(struct dzn_physical_device *pdevice,
       D3D12_MEMORY_POOL_L1 : D3D12_MEMORY_POOL_L0;
    bool host_wb = pdevice->architecture.CacheCoherentUMA;
 #ifndef _WIN32
-   /* WSL maps write-combined memory at ~12 MB/s, write-back is fine on UMA. */
+   /* WSL maps write-combined memory at ~12 MB/s, write-back is fine on UMA.
+    * Upstream only uses write-back with CacheCoherentUMA; a UMA GPU that does
+    * not snoop CPU caches could read stale uploads. Intel iGPUs snoop.
+    * TODO: find out why the Arc B390 reports UMA but not CacheCoherentUMA. */
    host_wb |= pdevice->architecture.UMA;
 #endif
    if ((mem_type->propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) ||
