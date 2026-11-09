@@ -593,7 +593,7 @@ d3d12_compare_varying_info(const d3d12_varying_info *expect, const d3d12_varying
       return true;
    }
 
-   return !memcmp(expect->slots, have->slots, sizeof(expect->slots[0]) * expect->max);
+   return !memcmp(expect->slots, have->slots, sizeof(expect->slots[0]) * (expect->max + 1));
 }
 
 
