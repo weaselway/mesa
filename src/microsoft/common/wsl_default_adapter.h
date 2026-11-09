@@ -17,6 +17,11 @@
  * contains MESA_D3D12_DEFAULT_ADAPTER_NAME (Linux only), else the first
  * integrated one, else the first. dzn uses it to know which adapter a d3d12
  * compositor runs on. -1 for an empty list.
+ *
+ * That is a guess: it is only right if the compositor and the client see the
+ * same MESA_D3D12_DEFAULT_ADAPTER_NAME. A client started with another value
+ * presents dma-bufs from an adapter the compositor cannot open them on.
+ * Nothing tells a client the compositor's LUID, so it cannot check.
  */
 static inline int
 wsl_default_adapter_index(IDXCoreAdapterList *list)
