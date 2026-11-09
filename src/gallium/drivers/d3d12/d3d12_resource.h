@@ -58,8 +58,11 @@ struct d3d12_resource {
    struct pipe_resource *dt_proxy;
 
    /* Imported buffer this texture shows the top-left part of, copied in before
-    * each GPU read. See d3d12_refresh_sub_rect(). */
+    * the first GPU read of each batch, and the submit_id and imported_writes
+    * of the batch when it was last copied. See d3d12_refresh_sub_rect(). */
    struct pipe_resource *sub_rect_src;
+   uint64_t sub_rect_submit_id;
+   uint64_t sub_rect_imported_writes;
 
    struct util_range valid_buffer_range;
    uint32_t bind_counts[MESA_SHADER_STAGES][D3D12_RESOURCE_BINDING_TYPES];
