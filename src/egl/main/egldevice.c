@@ -37,8 +37,8 @@
 #endif
 #include "util/compiler.h"
 #include "util/macros.h"
+#include "util/u_atomic.h"
 #include "util/u_call_once.h"
-#include "util/os_misc.h"
 #include "util/u_debug.h"
 
 #include "eglcurrent.h"
@@ -258,6 +258,15 @@ out:
  */
 static const char *_egl_software_render_node;
 
+/* Set once a display in this process got a d3d12 screen. */
+static bool _egl_d3d12_screen;
+
+void
+_eglNoteD3D12Screen(void)
+{
+   p_atomic_set(&_egl_d3d12_screen, true);
+}
+
 /* Whether the render node at path belongs to the dxgdrm driver. Asks sysfs
  * rather than opening the node, so other GPUs' nodes are never touched. */
 static bool
@@ -287,13 +296,7 @@ _eglInitSoftwareRenderNode(void)
    drmDevicePtr devices[64];
    int num_devs;
 
-   /* Only the d3d12 driver is served by dxgdrm; llvmpipe/softpipe are real
-    * software devices and must not claim a render node. d3d12 needs /dev/dxg,
-    * and is skipped when a software rasterizer is forced. */
-   const char *gallium_driver = os_get_option("GALLIUM_DRIVER");
-   if (access("/dev/dxg", F_OK) != 0 ||
-       debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false) ||
-       (gallium_driver && strcmp(gallium_driver, "d3d12") != 0))
+   if (access("/dev/dxg", F_OK) != 0)
       return;
 
    /* drmGetDevices2() returns the total count, which can exceed what it
@@ -322,6 +325,12 @@ static const char *
 _eglSoftwareRenderNode(void)
 {
    static util_once_flag once = UTIL_ONCE_FLAG_INIT;
+
+   /* Only the d3d12 driver is served by dxgdrm; llvmpipe/softpipe are real
+    * software devices and must not claim a render node, also not when
+    * llvmpipe is a fallback after d3d12 failed to come up. */
+   if (!p_atomic_read(&_egl_d3d12_screen))
+      return NULL;
 
    util_call_once(&once, _eglInitSoftwareRenderNode);
    return _egl_software_render_node;
