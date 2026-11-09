@@ -40,6 +40,11 @@ struct d3d12_root_signature_key {
    } stages[D3D12_GFX_SHADER_STAGES];
 };
 
+/* Private data on each ID3D12RootSignature: its d3d12_root_signature_key,
+ * which the pipeline state disk cache hashes. */
+static const GUID d3d12_root_signature_key_guid =
+   { 0x7d0e6c50, 0x952b, 0x42b0, { 0x87, 0x20, 0xa5, 0x36, 0xea, 0x43, 0x94, 0x48 } };
+
 void
 d3d12_root_signature_cache_init(struct d3d12_context *ctx);
 

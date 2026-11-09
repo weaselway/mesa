@@ -237,6 +237,7 @@ create_root_signature(struct d3d12_context *ctx, struct d3d12_root_signature_key
       debug_printf("CreateRootSignature failed\n");
       return NULL;
    }
+   ret->SetPrivateData(d3d12_root_signature_key_guid, sizeof(*key), key);
    return ret;
 }
 
