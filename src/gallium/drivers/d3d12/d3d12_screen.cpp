@@ -54,6 +54,8 @@
 #include "util/u_screen.h"
 #include "util/u_dl.h"
 #include "util/mesa-blake3.h"
+#include "util/disk_cache.h"
+#include "util/hex.h"
 
 #include "frontend/sw_winsys.h"
 
@@ -100,6 +102,34 @@ enum {
     HW_VENDOR_MICROSOFT             = 0x1414,
     HW_VENDOR_NVIDIA                = 0x10de,
 };
+
+#ifdef HAVE_GALLIUM_D3D12_GRAPHICS
+/* Pipeline state blobs are only valid for the adapter and driver that made
+ * them, so both go into the cache identity along with this build. */
+static void
+create_pso_cache(struct d3d12_screen *screen)
+{
+   /* NVIDIA's WSL driver (32.0.15.8266) aborts with a double free in
+    * GetCachedBlob, so the cache is opt-in there. */
+   if (!debug_parse_bool_option(os_get_option("MESA_D3D12_PSO_CACHE"),
+                                screen->vendor_id != HW_VENDOR_NVIDIA))
+      return;
+
+   blake3_hasher ctx;
+   blake3_hash hash;
+   char cache_id[BLAKE3_HEX_LEN];
+   _mesa_blake3_init(&ctx);
+   if (!disk_cache_get_function_identifier((void *)create_pso_cache, &ctx))
+      return;
+   _mesa_blake3_update(&ctx, &screen->vendor_id, sizeof(screen->vendor_id));
+   _mesa_blake3_update(&ctx, &screen->device_id, sizeof(screen->device_id));
+   _mesa_blake3_update(&ctx, &screen->driver_version, sizeof(screen->driver_version));
+   _mesa_blake3_final(&ctx, hash);
+   mesa_bytes_to_hex(cache_id, hash, BLAKE3_OUT_LEN);
+
+   screen->pso_cache = disk_cache_create("d3d12_pso", cache_id, 0);
+}
+#endif // HAVE_GALLIUM_D3D12_GRAPHICS
 
 static const char *
 d3d12_get_vendor(struct pipe_screen *pscreen)
@@ -730,6 +760,7 @@ d3d12_destroy_screen(struct d3d12_screen *screen)
 #ifdef HAVE_GALLIUM_D3D12_GRAPHICS
    d3d12_varying_cache_destroy(screen);
    mtx_destroy(&screen->varying_info_mutex);
+   disk_cache_destroy(screen->pso_cache);
 #endif // HAVE_GALLIUM_D3D12_GRAPHICS
 
 #ifndef _WIN32
@@ -1924,6 +1955,7 @@ d3d12_init_screen(struct d3d12_screen *screen, IUnknown *adapter)
                                     screen->max_shader_model,
                                     supported_int_sizes,
                                     supported_float_sizes);
+      create_pso_cache(screen);
    }
 #endif // HAVE_GALLIUM_D3D12_GRAPHICS
 
