@@ -188,12 +188,14 @@ dri_create_drawable(struct dri_screen *screen, const struct dri_config *config,
       break;
    case DRI_SCREEN_SWRAST:
       /* A swrast screen normally presents by handing pixels back to the loader
-       * through putImage. A loader that supplies an image loader as well is
-       * telling us it can take buffers from the driver directly: that happens
-       * when the GPU is not reachable through a DRM node (WSL/d3d12, which is
-       * loaded as a swrast target via dxcore) but the driver can still export
-       * them. Honour that and allocate from the driver instead of shm. */
-      if (screen->image.loader)
+       * through putImage. A loader that supplies only an image loader, without
+       * the swrast one, is telling us it takes buffers from the driver
+       * directly: that happens when the GPU is not reachable through a DRM
+       * node (WSL/d3d12, which is loaded as a swrast target via dxcore) but the
+       * driver can still export them. Honour that and allocate from the driver
+       * instead of shm. Loaders that offer both (surfaceless, device) keep the
+       * drisw path, which handles image-loader buffers itself. */
+      if (!screen->swrast_loader && screen->image.loader)
          dri2_init_drawable(drawable, isPixmap, visual->alphaBits);
       else
          drisw_init_drawable(drawable, isPixmap, visual->alphaBits);
