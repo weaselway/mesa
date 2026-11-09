@@ -6734,8 +6734,10 @@ nir_to_dxil(struct nir_shader *s, const struct nir_to_dxil_options *opts,
    NIR_PASS(_, s, nir_remove_dead_variables,
               nir_var_function_temp | nir_var_mem_constant | nir_var_mem_shared, NULL);
 
-   if (!allocate_sysvalues(ctx))
-      return false;
+   if (!allocate_sysvalues(ctx)) {
+      retval = false;
+      goto out;
+   }
 
    NIR_PASS(_, s, dxil_nir_lower_sysval_to_load_input, ctx->system_value);
    /* Must run after optimize_nir(), whose nir_opt_peephole_select folds if/phi into bcsel */
