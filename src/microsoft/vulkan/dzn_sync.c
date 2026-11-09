@@ -31,8 +31,8 @@
 #include "util/os_time.h"
 
 #ifndef _WIN32
-#include <sys/eventfd.h>
 #include <libsync.h>
+#include "wsl_eventfd.h"
 #endif
 
 static VkResult
@@ -144,7 +144,7 @@ dzn_sync_wait(struct vk_device *device,
    if (event == NULL)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 #else
-   int event_fd = eventfd(0, EFD_CLOEXEC);
+   int event_fd = wsl_eventfd(EFD_CLOEXEC);
    if (event_fd == -1)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
    /* The D3D12 event-based APIs in WSL expect an eventfd file descriptor cast to HANDLE */
