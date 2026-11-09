@@ -70,6 +70,8 @@ struct d3d12_batch {
    struct util_dynarray exported_writes;
    /* Whether it wrote to a dxgdrm framebuffer, see d3d12_bo::scanout. */
    bool wrote_scanout;
+   /* Counts writes to imported bos, see d3d12_refresh_sub_rect(). */
+   uint64_t imported_writes;
 
    uint64_t submit_id;
    uint32_t ctx_id, ctx_index;
