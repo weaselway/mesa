@@ -107,6 +107,10 @@ struct d3d12_screen {
    struct set* varying_info_set;
    mtx_t varying_info_mutex;
 
+   /* Driver blobs of compiled pipeline states, kept across processes. NULL
+    * when disabled. */
+   struct disk_cache *pso_cache;
+
    struct slab_parent_pool transfer_pool;
    struct pb_manager *bufmgr;
    struct pb_manager *cache_bufmgr;
