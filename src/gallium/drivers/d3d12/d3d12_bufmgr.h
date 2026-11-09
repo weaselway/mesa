@@ -74,6 +74,9 @@ struct d3d12_bo {
     * so writes to it are always waited out. See d3d12_flush_cmdlist(). */
    bool scanout;
 
+   /* Set when the bo came in through d3d12_resource_from_handle(). */
+   bool imported;
+
    /* Set once a fence covering a write to this exported bo was handed out
     * as a sync_file, i.e. whoever renders to it syncs explicitly. Only a hint
     * for d3d12_flush_cmdlist(); written from any thread. */

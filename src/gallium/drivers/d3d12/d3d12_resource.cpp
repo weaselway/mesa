@@ -604,7 +604,9 @@ d3d12_resource_create(struct pipe_screen *pscreen,
  * at the visible size (640x360). A D3D12 view always spans the whole
  * resource, so sampling the import directly squashes the padding rows into
  * the picture. Instead, the import is a private texture of the requested
- * size, and the region is copied in from the buffer before each GPU read. */
+ * size, and the region is copied in from the buffer before the first GPU read
+ * in each batch. Writes to the import are never copied back to the buffer and
+ * may be overwritten by the next refresh. */
 static struct pipe_resource *
 wrap_sub_rect(struct pipe_screen *pscreen, struct d3d12_resource *src,
               const struct pipe_resource *templ,
@@ -634,6 +636,18 @@ wrap_sub_rect(struct pipe_screen *pscreen, struct d3d12_resource *src,
 void
 d3d12_refresh_sub_rect(struct d3d12_context *ctx, struct d3d12_resource *res)
 {
+   /* Another queue's writes to the buffer only become visible after a fence
+    * wait, and d3d12_wait() ends the batch, so one copy per batch sees them
+    * all. Our own writes within the batch may go through another import of
+    * the same buffer, a different bo, so any write to an imported bo since the
+    * last copy needs another one. */
+   struct d3d12_batch *batch = d3d12_current_batch(ctx);
+   if (res->sub_rect_submit_id == batch->submit_id &&
+       res->sub_rect_imported_writes == batch->imported_writes)
+      return;
+   res->sub_rect_submit_id = batch->submit_id;
+   res->sub_rect_imported_writes = batch->imported_writes;
+
    struct pipe_box box;
    u_box_2d(0, 0, res->base.b.width0, res->base.b.height0, &box);
    ctx->base.resource_copy_region(&ctx->base, &res->base.b, 0, 0, 0, 0,
@@ -928,8 +942,10 @@ d3d12_resource_from_handle(struct pipe_screen *pscreen,
    }
    /* Imported the other way round, same reasoning as on export: this resource is
     * visible to a process we share no queue with. */
-   if (res->bo)
+   if (res->bo) {
       res->bo->exported = true;
+      res->bo->imported = true;
+   }
    init_valid_range(res);
 
    threaded_resource_init(&res->base.b, false);

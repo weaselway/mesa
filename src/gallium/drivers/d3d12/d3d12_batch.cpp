@@ -495,6 +495,8 @@ d3d12_batch_reference_resource(struct d3d12_batch *batch,
       util_dynarray_append(&batch->exported_writes, res->bo);
    if (write && res->bo && res->bo->scanout)
       batch->wrote_scanout = true;
+   if (write && res->bo && res->bo->imported)
+      batch->imported_writes++;
 }
 
 void
