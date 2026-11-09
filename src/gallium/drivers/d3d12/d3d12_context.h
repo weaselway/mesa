@@ -178,6 +178,10 @@ struct d3d12_context {
    struct util_dynarray barrier_scratch;
    struct set *pending_barriers_bos;
    struct util_dynarray local_pending_barriers_bos;
+   /* Exported d3d12_bo's (referenced) written since the last fence this
+    * context handed out, not yet known to be synced explicitly. See
+    * d3d12_flush(). */
+   struct util_dynarray unfenced_exported_writes;
    uint64_t submit_id;
    ID3D12GraphicsCommandList *cmdlist;
    ID3D12GraphicsCommandList2 *cmdlist2;
