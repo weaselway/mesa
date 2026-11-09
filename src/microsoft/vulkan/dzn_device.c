@@ -2374,7 +2374,7 @@ dzn_queue_submit(struct vk_queue *q,
 
       util_dynarray_foreach(&cmd_buffer->events.signal, struct dzn_cmd_event_signal, evt) {
          if (FAILED(ID3D12CommandQueue_Signal(queue->cmdqueue, evt->event->fence, evt->value ? 1 : 0)))
-            return vk_error(device, VK_ERROR_UNKNOWN);
+            result = vk_error(device, VK_ERROR_UNKNOWN);
       }
 
       util_dynarray_foreach(&cmd_buffer->queries.signal, struct dzn_cmd_buffer_query_range, range) {
@@ -2392,7 +2392,7 @@ dzn_queue_submit(struct vk_queue *q,
 #ifdef __linux__
    int signal_file = -1;
 #endif
-   for (uint32_t i = 0; i < info->signal_count; i++) {
+   for (uint32_t i = 0; i < info->signal_count && result == VK_SUCCESS; i++) {
 #ifdef __linux__
       if (vk_sync_type_is_drm_syncobj(info->signals[i].sync->type)) {
          /* All syncobjs get the queue fence value signalled below. */
@@ -2413,13 +2413,13 @@ dzn_queue_submit(struct vk_queue *q,
    if (signal_file >= 0)
       close(signal_file);
 #endif
-   if (result != VK_SUCCESS)
-      return result;
 
+   /* Also after an error above: queries and syncobjs already signalled
+    * wait for this point, and would otherwise wait for the next submit. */
    if (FAILED(ID3D12CommandQueue_Signal(queue->cmdqueue, queue->fence, ++queue->fence_point)))
       return vk_error(device, VK_ERROR_UNKNOWN);
 
-   return VK_SUCCESS;
+   return result;
 }
 
 static void
