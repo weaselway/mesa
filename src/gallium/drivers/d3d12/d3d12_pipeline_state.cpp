@@ -685,11 +685,40 @@ create_compute_pipeline_state(struct d3d12_context *ctx)
 
    pso_desc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
 
-   ID3D12PipelineState *ret;
-   if (FAILED(screen->dev->CreateComputePipelineState(&pso_desc,
-                                                      IID_PPV_ARGS(&ret)))) {
-      debug_printf("D3D12: CreateComputePipelineState failed!\n");
-      return NULL;
+   ID3D12PipelineState *ret = NULL;
+   HRESULT hr = E_FAIL;
+
+   cache_key key;
+   bool cacheable = false;
+   if (screen->pso_cache) {
+      blake3_hasher h;
+      _mesa_blake3_init(&h);
+      cacheable = hash_root_signature(&h, state->root_signature);
+      hash_bytecode(&h, pso_desc.CS);
+      finish_pso_key(screen, &h, key);
+   }
+   if (cacheable) {
+      size_t size;
+      void *blob = disk_cache_get(screen->pso_cache, key, &size);
+      if (blob) {
+         pso_desc.CachedPSO.pCachedBlob = blob;
+         pso_desc.CachedPSO.CachedBlobSizeInBytes = size;
+         /* A stale blob (new driver or runtime) fails; build without it. */
+         hr = screen->dev->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&ret));
+         pso_desc.CachedPSO.pCachedBlob = NULL;
+         pso_desc.CachedPSO.CachedBlobSizeInBytes = 0;
+         free(blob);
+      }
+   }
+
+   if (FAILED(hr)) {
+      if (FAILED(screen->dev->CreateComputePipelineState(&pso_desc,
+                                                         IID_PPV_ARGS(&ret)))) {
+         debug_printf("D3D12: CreateComputePipelineState failed!\n");
+         return NULL;
+      }
+      if (cacheable)
+         store_pso_blob(screen, ret, key);
    }
 
    return ret;
