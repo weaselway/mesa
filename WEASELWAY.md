@@ -2,8 +2,8 @@
 
 A compile check for this fork, using the dev shell in [flake.nix](flake.nix)
 (nixpkgs `nixos-26.05`). Nothing is installed. What ships is built by the
-[weaselway](https://github.com/weaselway/weaselway) flake, from the release
-branch that matches nixpkgs' mesa (now `mesa-26.2.1-wsl`).
+[weaselway](https://github.com/weaselway/weaselway) flake, from a release
+branch (now `mesa-26.2.6-wsl`), with nixpkgs' Mesa package definition.
 
 ```sh
 ./weaselway-build.sh
@@ -41,7 +41,7 @@ The list lives in [weaselway-build.sh](weaselway-build.sh).
 ## Notes
 
 - The dev shell takes its dependencies from nixpkgs' own mesa
-  (`inputsFrom = [ pkgs.mesa ]`, 26.1.x). The fork's `main` is 26.3-devel. If
+  (`inputsFrom = [ pkgs.mesa ]`, 26.1.x). The fork's `main` is 27.0-devel. If
   `main` starts needing something newer, add it to `packages` in the flake.
 - meson picks the newest `python3.X` on `PATH`, so a python from your user
   profile would win over the shell's python 3.13 and its mako/yaml. The shell

@@ -27,6 +27,11 @@ built without `CONFIG_SW_SYNC`, so userspace cannot make a sync_file itself.
 - `sync_valid_fd()` in `util/libsync.h` accepts any open fd, so that the
   eventfd fallback passes the debug check that aborts the process.
 - `dxgdrm_drm.h` in `include/drm-uapi` is a copy of the module's header.
+- An eventfd that lands on fd 0 is moved to a higher fd
+  (`src/microsoft/common/wsl_eventfd.h`). D3D12 on WSL reads event handle 0
+  as NULL, waits inline and never signals the fd. A process that closed
+  stdin got eventfds on fd 0, so its native fence fds came back as -1 and
+  dzn's fence waits never finished. dzn's eventfds use the same helper.
 
 ## Consequences
 

@@ -40,6 +40,9 @@ handles never leave `libd3d12core.so`, which creates them through
   Mesa logs a warning and all contexts stay at 0.
 - The vendor driver creates further contexts through `libdxcore.so`
   directly. The hook does not see them; they stay at 0.
+- A priority only helps as far as the GPU preempts. On a GPU that preempts
+  only between DMA buffers (NVIDIA 940MX), a heavy client halves a light
+  client's frame rate at any priority (weaselway 0033).
 - Not upstreamable as it is: patching another library's GOT is a WSL
   workaround for a missing D3D12 interface.
 - `MESA_D3DKMT_PRIORITY_DEBUG=1` with `MESA_LOG_LEVEL=info` logs every

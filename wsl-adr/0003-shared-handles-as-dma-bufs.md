@@ -29,6 +29,9 @@ became exactly that request.
 
 - Both ends of a hand-off have to be this driver. Any other importer gets an
   fd it cannot use.
+- dzn's WSI images are real dma-bufs from dxgdrm that wrap a shared handle
+  (0013). The d3d12 importer asks dxgdrm for the handle first, so it takes
+  both kinds. d3d12's own exports are still plain shared handles.
 - Chromium's scanout buffers allocate.
 - `DMA_BUF_IOCTL_IMPORT_SYNC_FILE` and the other dma-buf ioctls fail on these
   fds, so implicit sync is not available (see 0004).
