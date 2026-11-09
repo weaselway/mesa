@@ -65,8 +65,9 @@ struct d3d12_batch {
    bool has_errors;
    bool pending_memory_barrier;
 
-   /* Whether this batch wrote to a resource another process can see. */
-   bool wrote_exported;
+   /* The d3d12_bo's another process can see that this batch wrote, each once.
+    * The batch holds a reference to all of them until it is reset. */
+   struct util_dynarray exported_writes;
    /* Whether it wrote to a dxgdrm framebuffer, see d3d12_bo::scanout. */
    bool wrote_scanout;
 

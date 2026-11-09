@@ -24,6 +24,7 @@
 #ifndef D3D12_FENCE_H
 #define D3D12_FENCE_H
 
+#include "util/u_dynarray.h"
 #include "util/u_inlines.h"
 
 #include "d3d12_common.h"
@@ -97,6 +98,10 @@ struct d3d12_fence {
    /* Imported from a foreign native-sync fd: there is no ID3D12Fence behind
     * this one, only event_fd, and it can only be waited on by the CPU. */
    bool foreign_fd;
+
+   /* Exported d3d12_bo's (referenced) the context wrote since its previous
+    * fence. Exporting this fence as a sync_file marks them explicit_sync. */
+   struct util_dynarray exported_writes;
 };
 
 static inline struct d3d12_fence *

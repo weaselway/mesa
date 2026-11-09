@@ -162,14 +162,6 @@ struct d3d12_screen {
    bool supports_dynamic_queue_priority;
 
 #ifndef _WIN32
-   /* Set the first time this screen hands out a fence fd backed by a real
-    * sync_file (dxgdrm), atomically since any thread may export. A client taking
-    * native fence fds is doing its frame-end synchronization explicitly, which
-    * means the compositor gets a real acquire fence and d3d12_flush_cmdlist()
-    * no longer has to stall on its behalf. Screens are per-process, so this
-    * tracks the client, not a surface -- exactly the granularity wanted. */
-   bool exports_fence_fds;
-
    /* An fd on the dxgdrm render node, or -1. Only used to turn the eventfd
     * behind a d3d12 fence into a real sync_file (see fence_get_fd). Opened here,
     * at screen creation, because that is before Chromium's GPU sandbox closes --

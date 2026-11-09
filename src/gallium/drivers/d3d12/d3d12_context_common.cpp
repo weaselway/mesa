@@ -98,6 +98,9 @@ d3d12_context_destroy(struct pipe_context *pctx)
    d3d12_end_batch(ctx, d3d12_current_batch(ctx));
    for (unsigned i = 0; i < ARRAY_SIZE(ctx->batches); ++i)
       d3d12_destroy_batch(ctx, &ctx->batches[i]);
+   util_dynarray_foreach(&ctx->unfenced_exported_writes, struct d3d12_bo *, bo)
+      d3d12_bo_unreference(*bo);
+   util_dynarray_fini(&ctx->unfenced_exported_writes);
    ctx->cmdlist->Release();
    if (ctx->cmdlist2)
       ctx->cmdlist2->Release();
@@ -189,8 +192,17 @@ d3d12_flush_cmdlist(struct d3d12_context *ctx)
     * protocol (SyncMethod::kSyncobj) instead of trying to stuff it into the
     * buffer with DMA_BUF_IOCTL_IMPORT_SYNC_FILE, which cannot work on a D3D12
     * shared handle. The compositor then waits on the fence itself and stalling
-    * here buys nothing but latency. exports_fence_fds is the signal: a screen
-    * that has handed out a fence fd belongs to such a client.
+    * here buys nothing but latency. The signal is learned per bo: the exported
+    * bos a context writes are collected until it hands out a fence (see
+    * d3d12_flush()), and exporting that fence as a sync_file marks them
+    * explicit_sync. Later writes to them skip the stall. So the first frame
+    * on each buffer still stalls, and buffers whose fences are never exported
+    * keep stalling.
+    *
+    * shortcut: a bo written by the same context between the same two fences
+    * as an explicitly synced one is learned as explicit too. Knowing which
+    * buffer the fence went with needs the Wayland protocol traffic, which Mesa
+    * does not see; revisit if such a mix shows up.
     *
     * This has to sit here rather than in d3d12_flush(): pipe_context::flush is
     * only one of the ways a command list reaches the queue, and measurement
@@ -201,13 +213,24 @@ d3d12_flush_cmdlist(struct d3d12_context *ctx)
     * Batches that only read exported resources -- a compositor sampling its
     * clients -- do not pay for this.
     */
-   if (batch->wrote_exported && batch->fence &&
-       !p_atomic_read(&d3d12_screen(ctx->base.screen)->exports_fence_fds))
-      d3d12_fence_finish(batch->fence, OS_TIMEOUT_INFINITE);
+   bool stall = false;
+   util_dynarray_foreach(&batch->exported_writes, struct d3d12_bo *, pbo) {
+      struct d3d12_bo *bo = *pbo;
+      if (p_atomic_read(&bo->explicit_sync))
+         continue;
+      stall = true;
+      bool listed = false;
+      util_dynarray_foreach(&ctx->unfenced_exported_writes, struct d3d12_bo *, other)
+         listed |= *other == bo;
+      if (!listed) {
+         d3d12_bo_reference(bo);
+         util_dynarray_append(&ctx->unfenced_exported_writes, bo);
+      }
+   }
    /* A framebuffer on the dxgdrm KMS node is different: a compositor that
     * swaps and page-flips hands the kernel no fence, whatever it does with
-    * fence fds elsewhere, so exports_fence_fds says nothing about it. */
-   else if (batch->wrote_scanout && batch->fence)
+    * fence fds elsewhere, so explicit_sync says nothing about it. */
+   if ((stall || batch->wrote_scanout) && batch->fence)
       d3d12_fence_finish(batch->fence, OS_TIMEOUT_INFINITE);
 
    ctx->current_batch_idx++;
@@ -245,6 +268,14 @@ d3d12_flush(struct pipe_context *pipe,
          d3d12_fence_reference((struct d3d12_fence **)fence, batch->fence);
       else
          *fence = (pipe_fence_handle *)d3d12_create_fence(d3d12_screen(ctx->base.screen), false);
+
+      /* The fence covers all writes so far; hand it the references. */
+      struct d3d12_fence *f = d3d12_fence(*fence);
+      if (f) {
+         util_dynarray_foreach(&ctx->unfenced_exported_writes, struct d3d12_bo *, bo)
+            util_dynarray_append(&f->exported_writes, *bo);
+         util_dynarray_clear(&ctx->unfenced_exported_writes);
+      }
    }
 }
 
