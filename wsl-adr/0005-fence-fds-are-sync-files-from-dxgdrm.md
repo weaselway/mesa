@@ -24,8 +24,10 @@ built without `CONFIG_SW_SYNC`, so userspace cannot make a sync_file itself.
 - An imported native fence fd becomes a CPU-only fence (`foreign_fd`).
   Waiting on it on a queue blocks the CPU, since there is no `ID3D12Fence` to
   wait on.
-- `sync_valid_fd()` in `util/libsync.h` accepts any open fd, so that the
-  eventfd fallback passes the debug check that aborts the process.
+- `sync_valid_fd()` in `util/libsync.h` accepts eventfds as well as
+  sync_files, told apart by their `/proc/self/fd` link, so that the eventfd
+  fallback passes the debug check that aborts the process. Without `/proc`
+  it accepts any open fd.
 - `dxgdrm_drm.h` in `include/drm-uapi` is a copy of the module's header.
 - An eventfd that lands on fd 0 is moved to a higher fd
   (`src/microsoft/common/wsl_eventfd.h`). D3D12 on WSL reads event handle 0
@@ -39,6 +41,7 @@ built without `CONFIG_SW_SYNC`, so userspace cannot make a sync_file itself.
   weaselwayd's readback fence (weaselway 0007).
 - Without dxgdrm, fence fds still trigger submission, but cannot be imported,
   merged or queried.
-- The relaxed `sync_valid_fd()` applies to every driver, not only d3d12.
+- The relaxed `sync_valid_fd()` applies to every driver, not only d3d12. It
+  costs a `readlink()` for every fd that is not a sync_file.
 - The header has to be synced by hand when the uapi changes. New fields are
   appended and must be zero (dxgdrm 0009).

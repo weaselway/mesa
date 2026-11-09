@@ -38,8 +38,8 @@ Found while writing these records, details in the linked files:
   frame they hand to the compositor, and so does the compositor for every
   frame it flips ([0004](0004-exported-writes-waited-out-on-the-cpu.md),
   [0008](0008-scanout-buffers-get-gem-handles.md)).
-- A client that exports one sync_file is assumed to sync all its buffers
-  explicitly, and can tear if it does not
+- A buffer written between the same two fences as one the client syncs
+  explicitly is assumed to be synced explicitly too, and can tear if it is not
   ([0004](0004-exported-writes-waited-out-on-the-cpu.md)).
 - A d3d12 buffer handed to anything other than d3d12 cannot be used, because
   it is a shared handle, not a dma-buf
@@ -48,8 +48,8 @@ Found while writing these records, details in the linked files:
   ([0005](0005-fence-fds-are-sync-files-from-dxgdrm.md)) and the Wayland swap
   timeout ([0010](0010-wayland-swaps-throttle-on-frame-callbacks.md)). They
   cannot go upstream as they are.
-- The software device's render node is chosen from environment variables,
-  not from the driver actually loaded
+- The software device reports the render node once any display in the
+  process got a d3d12 screen, not per display
   ([0007](0007-software-device-reports-the-dxgdrm-node.md)).
 - On the compositor's adapter, dzn's `OPAQUE_FD` semaphores are DRM
   syncobjs, not D3D12 shared handles, and Vulkan clients on other adapters

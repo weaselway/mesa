@@ -30,7 +30,8 @@ handles never leave `libd3d12core.so`, which creates them through
   context on the calling thread, so the priority is passed to the hook in a
   thread-local variable while `CreateCommandQueue` runs.
 - If a second Mesa driver in the process already replaced an entry, the
-  hook calls that one.
+  hook calls that one. It then keeps the priority the other copy set, unless
+  its own driver pinned the context or asked for a priority.
 - Commits: "d3d12, dzn: set dxgkrnl context priorities on WSL".
 
 ## Consequences

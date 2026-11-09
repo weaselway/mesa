@@ -18,15 +18,19 @@ on a shared handle, and commits anyway. Chromium also rarely submits through
 ## Decision
 
 - A buffer is marked `exported` once its handle crosses a process boundary,
-  in either direction. A batch that writes one is marked `wrote_exported`.
+  in either direction. A batch lists the exported buffers it writes in
+  `exported_writes`.
 - `d3d12_flush_cmdlist()`, through which every submission passes, waits for
   such a batch's fence before returning.
 - Wayland EGL on a `swrast_dmabuf` display (see 0002) also waits for the GPU
   in `eglSwapBuffers` before it attaches the buffer.
-- The wait is skipped once the screen has exported a fence as a sync_file
-  (`exports_fence_fds`, see 0005). The flag is set only after the dxgdrm ioctl
-  succeeded, and atomically. Screens are per process, so it marks a client
-  that hands its acquire fence to the compositor over linux-drm-syncobj-v1.
+- The wait is skipped for buffers learned to be synced explicitly. A context
+  collects the exported buffers it writes until it hands out a fence from
+  `pipe_context::flush`, and the fence takes the list. If that fence is
+  exported as a sync_file (see 0005), its buffers are marked `explicit_sync`
+  for good. This is a client that hands its acquire fence to the compositor
+  over linux-drm-syncobj-v1. A batch skips the wait only if every exported
+  buffer it wrote is marked.
 - Batches that only read exported buffers, as a compositor sampling its
   clients does, never wait.
 
@@ -34,6 +38,10 @@ on a shared handle, and commits anyway. Chromium also rarely submits through
 
 - Clients that rely on implicit sync stall the CPU on the GPU for every frame
   that writes a shared buffer.
-- A client that exports one sync_file for any reason loses the wait for all
-  its buffers, including those it presents without a fence.
+- The first frame on each buffer still waits.
+- A buffer written by the same context between the same two fences as an
+  explicitly synced one is marked too, and can tear if its consumer does not
+  wait. Which buffer a fence goes with is only visible in the Wayland
+  protocol traffic, which Mesa does not see.
+- A buffer whose client stops passing fences stays marked.
 - Scanout buffers on the KMS node are always waited out (see 0008).

@@ -19,14 +19,15 @@ client asking about its own display, which never calls `eglQueryDevicesEXT()`.
 - The node is found once, lazily, from the first query.
 - Its driver is identified through `/sys/dev/char/M:m/device/driver`. Nodes of
   other GPUs are not opened.
-- No node is reported when `/dev/dxg` is missing, `LIBGL_ALWAYS_SOFTWARE` is
-  set, or `GALLIUM_DRIVER` names a driver other than d3d12.
+- No node is reported when `/dev/dxg` is missing, or before a display in the
+  process got a d3d12 screen. `dri2_create_screen()` notes that through
+  `_eglNoteD3D12Screen()`.
 
 ## Consequences
 
 - mutter offers linux-drm-syncobj-v1 and dma-buf feedback, which moves
   `zwp_linux_dmabuf_v1` from version 3 to 5.
-- A forced llvmpipe stays a plain software device.
-- The check uses environment variables, not the driver actually loaded. A
-  software device that is not d3d12, on a machine with `/dev/dxg` and dxgdrm
-  and no variable set, would report the node.
+- llvmpipe stays a plain software device, also when it is the fallback after
+  d3d12 failed to come up.
+- The note is per process. A process with one d3d12 display and one llvmpipe
+  display reports the node for both.

@@ -23,8 +23,10 @@ path is not taken. It remains the path without the module.
 - Wayland EGL comes up as `swrast_dmabuf` when the compositor offers
   `zwp_linux_dmabuf_v1` but names no render node it can open. The driver is
   loaded as `swrast` (or zink), and the fd-based device probing is skipped.
-- A swrast DRI screen whose loader supplies an image loader allocates its
-  drawables from the driver, as a DRI2 screen does, instead of using shm.
+- A swrast DRI screen whose loader supplies an image loader and no swrast
+  loader allocates its drawables from the driver, as a DRI2 screen does,
+  instead of using shm. Loaders that supply both (surfaceless, device) keep
+  the drisw drawables, which handle image-loader buffers themselves.
 - On such a display, flush and resize handling run as for a GPU display.
 - eglInitialize fails this path when the driver cannot both import and export
   dma-bufs, so EGL retries with plain software rendering.
