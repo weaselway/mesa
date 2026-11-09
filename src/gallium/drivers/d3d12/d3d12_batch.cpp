@@ -62,6 +62,7 @@ d3d12_init_batch(struct d3d12_context *ctx, struct d3d12_batch *batch)
    batch->local_bos = UTIL_DYNARRAY_INIT;
    batch->local_bo_pending = UTIL_DYNARRAY_INIT;
    batch->bos_pending = UTIL_DYNARRAY_INIT;
+   batch->exported_writes = UTIL_DYNARRAY_INIT;
 
 #ifdef HAVE_GALLIUM_D3D12_GRAPHICS
    batch->surfaces = _mesa_set_create(NULL, _mesa_hash_pointer,
@@ -246,6 +247,7 @@ d3d12_destroy_batch(struct d3d12_context *ctx, struct d3d12_batch *batch)
    util_dynarray_fini(&batch->local_bos);
    util_dynarray_fini(&batch->local_bo_pending);
    util_dynarray_fini(&batch->bos_pending);
+   util_dynarray_fini(&batch->exported_writes);
 }
 
 void
@@ -254,7 +256,7 @@ d3d12_start_batch(struct d3d12_context *ctx, struct d3d12_batch *batch)
    struct d3d12_screen *screen = d3d12_screen(ctx->base.screen);
    d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);
 
-   batch->wrote_exported = false;
+   util_dynarray_clear(&batch->exported_writes);
    batch->wrote_scanout = false;
 
    /* Create or reset global command list */
@@ -493,8 +495,9 @@ d3d12_batch_reference_resource(struct d3d12_batch *batch,
    uint8_t old_data = (uint8_t)*state;
    *state = (old_data | new_data);
 
-   if (write && res->bo && res->bo->exported)
-      batch->wrote_exported = true;
+   if (write && !(old_data & batch_bo_reference_written) &&
+       res->bo && res->bo->exported)
+      util_dynarray_append(&batch->exported_writes, res->bo);
    if (write && res->bo && res->bo->scanout)
       batch->wrote_scanout = true;
 }
