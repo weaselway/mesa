@@ -147,7 +147,10 @@ d3d12_bo_new(struct d3d12_screen *screen, uint64_t size, const pb_desc *pb_desc)
 #ifndef _WIN32
    /* WSL maps write-combined memory so that CPU writes run at ~12 MB/s, which
     * makes every texture upload through an upload heap crawl. Write-back is
-    * valid for L0 on UMA (readback heaps use it) and writes at memcpy speed. */
+    * valid for L0 on UMA (readback heaps use it) and writes at memcpy speed.
+    * Upstream only uses it with CacheCoherentUMA; a UMA GPU that does not
+    * snoop CPU caches could read stale uploads. Intel iGPUs snoop.
+    * TODO: find out why the Arc B390 reports UMA but not CacheCoherentUMA. */
    if (heap_type == D3D12_HEAP_TYPE_UPLOAD && screen->architecture.UMA)
       heap_pris.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_WRITE_BACK;
 #endif
