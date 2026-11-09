@@ -62,7 +62,6 @@
 #ifdef __linux__
 #include <errno.h>
 #include <fcntl.h>
-#include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
@@ -72,6 +71,7 @@
 #include "util/os_file.h"
 #include "vk_drm_syncobj.h"
 #include "wsl_dxgdrm.h"
+#include "wsl_eventfd.h"
 #endif
 
 #define DZN_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
@@ -2218,7 +2218,7 @@ dzn_queue_fence_sync_file(struct dzn_queue *queue, uint64_t value, int *sync_fil
    struct dzn_physical_device *pdev =
       container_of(device->vk.physical, struct dzn_physical_device, vk);
 
-   int event_fd = eventfd(0, EFD_CLOEXEC);
+   int event_fd = wsl_eventfd(EFD_CLOEXEC);
    if (event_fd < 0)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
