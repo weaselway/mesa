@@ -2598,6 +2598,7 @@ dri2_export_dma_buf_image_mesa(_EGLDisplay *disp, _EGLImage *img, int *fds,
                        &is_disjoint);
    }
 
+   bool exported = true;
    for (int i = 0; i < nplanes; i++) {
       struct dri_image *image = dri2_img->dri_image;
       if (i)
@@ -2608,10 +2609,14 @@ dri2_export_dma_buf_image_mesa(_EGLDisplay *disp, _EGLImage *img, int *fds,
           *    "If the number of fds is less than the number of planes, then
           *    subsequent fd slots should contain -1."
           */
-         if (i == 0 || is_disjoint)
-            dri2_query_image(image, __DRI_IMAGE_ATTRIB_FD, &fds[i]);
-         else
+         fds[i] = -1;
+         /* A driver may refuse, e.g. d3d12 for a texture not created
+          * shareable. Callers close whatever ends up in the slot. */
+         if ((i == 0 || is_disjoint) &&
+             !dri2_query_image(image, __DRI_IMAGE_ATTRIB_FD, &fds[i])) {
             fds[i] = -1;
+            exported = false;
+         }
       }
 
       if (strides && !dri2_query_image(image, __DRI_IMAGE_ATTRIB_STRIDE, &strides[i]))
@@ -2622,6 +2627,16 @@ dri2_export_dma_buf_image_mesa(_EGLDisplay *disp, _EGLImage *img, int *fds,
 
       if (i)
          dri2_destroy_image(image);
+   }
+
+   if (!exported) {
+      for (int i = 0; i < nplanes; i++) {
+         if (fds[i] >= 0)
+            close(fds[i]);
+         fds[i] = -1;
+      }
+      mtx_unlock(&dri2_dpy->lock);
+      return _eglError(EGL_BAD_ALLOC, "eglExportDMABUFImageMESA");
    }
 
    mtx_unlock(&dri2_dpy->lock);
