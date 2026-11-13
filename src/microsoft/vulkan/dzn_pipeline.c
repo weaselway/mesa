@@ -1783,6 +1783,7 @@ dzn_pipeline_init(struct dzn_pipeline *pipeline,
    pipeline->root.sets_param_count = layout->root.sets_param_count;
    pipeline->root.sysval_cbv_param_idx = layout->root.sysval_cbv_param_idx;
    pipeline->root.push_constant_cbv_param_idx = layout->root.push_constant_cbv_param_idx;
+   pipeline->root.push_constant_dwords = layout->root.push_constant_dwords;
    pipeline->root.dynamic_buffer_bindless_param_idx = layout->root.dynamic_buffer_bindless_param_idx;
    STATIC_ASSERT(sizeof(pipeline->root.type) == sizeof(layout->root.type));
    memcpy(pipeline->root.type, layout->root.type, sizeof(pipeline->root.type));
