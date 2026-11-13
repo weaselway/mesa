@@ -2498,6 +2498,73 @@ dzn_cmd_buffer_copy_buf2img_region(struct dzn_cmd_buffer *cmdbuf,
    }
 }
 
+/* D3D12 copies depth-stencil resources only as whole subresources. Copy the
+ * whole plane to a temporary buffer, then the requested rows from there.
+ */
+static void
+dzn_cmd_buffer_copy_partial_ds_img2buf(struct dzn_cmd_buffer *cmdbuf,
+                                       const struct dzn_image *src_image,
+                                       const VkBufferImageCopy2 *region,
+                                       VkImageAspectFlagBits aspect,
+                                       const D3D12_TEXTURE_COPY_LOCATION *src_img_loc,
+                                       const D3D12_TEXTURE_COPY_LOCATION *dst_buf_loc)
+{
+   struct dzn_physical_device *pdev =
+      container_of(cmdbuf->vk.base.device->physical, struct dzn_physical_device, vk);
+   uint32_t mip = region->imageSubresource.mipLevel;
+   uint32_t blksz =
+      util_format_get_blocksize(vk_format_to_pipe_format(
+         dzn_image_get_plane_format(src_image->vk.format, aspect)));
+   uint32_t width = u_minify(src_image->vk.extent.width, mip);
+   uint32_t height = u_minify(src_image->vk.extent.height, mip);
+
+   D3D12_TEXTURE_COPY_LOCATION tmp_loc = {
+      .Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+      .PlacedFootprint.Footprint = {
+         .Format = dzn_image_get_placed_footprint_format(pdev, src_image->vk.format, aspect),
+         .Width = width,
+         .Height = height,
+         .Depth = 1,
+         .RowPitch = ALIGN_POT(width * blksz, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT),
+      },
+   };
+
+   if (dzn_cmd_buffer_alloc_internal_buf(cmdbuf,
+                                         tmp_loc.PlacedFootprint.Footprint.RowPitch * height,
+                                         DZN_INTERNAL_BUF_DEFAULT,
+                                         D3D12_RESOURCE_STATE_COPY_DEST, 0,
+                                         &tmp_loc.pResource, NULL) != VK_SUCCESS)
+      return;
+
+   ID3D12GraphicsCommandList1_CopyTextureRegion(cmdbuf->cmdlist, &tmp_loc, 0, 0, 0,
+                                                src_img_loc, NULL);
+
+   if (cmdbuf->enhanced_barriers) {
+      dzn_cmd_buffer_buffer_barrier(cmdbuf, tmp_loc.pResource,
+                                    D3D12_BARRIER_SYNC_COPY, D3D12_BARRIER_SYNC_COPY,
+                                    D3D12_BARRIER_ACCESS_COPY_DEST, D3D12_BARRIER_ACCESS_COPY_SOURCE);
+   } else {
+      dzn_cmd_buffer_queue_transition_barriers(cmdbuf, tmp_loc.pResource, 0, 1,
+                                               D3D12_RESOURCE_STATE_COPY_DEST,
+                                               D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                               DZN_QUEUE_TRANSITION_FLUSH);
+   }
+
+   for (uint32_t y = 0; y < region->imageExtent.height; y++) {
+      uint64_t src_offset =
+         (uint64_t)(region->imageOffset.y + y) * tmp_loc.PlacedFootprint.Footprint.RowPitch +
+         (uint64_t)region->imageOffset.x * blksz;
+      uint64_t dst_offset =
+         dst_buf_loc->PlacedFootprint.Offset +
+         (uint64_t)y * dst_buf_loc->PlacedFootprint.Footprint.RowPitch;
+
+      ID3D12GraphicsCommandList1_CopyBufferRegion(cmdbuf->cmdlist,
+                                                  dst_buf_loc->pResource, dst_offset,
+                                                  tmp_loc.pResource, src_offset,
+                                                  region->imageExtent.width * blksz);
+   }
+}
+
 static void
 dzn_cmd_buffer_copy_img2buf_region(struct dzn_cmd_buffer *cmdbuf,
                                    const VkCopyImageToBufferInfo2 *info,
@@ -2527,6 +2594,16 @@ dzn_cmd_buffer_copy_img2buf_region(struct dzn_cmd_buffer *cmdbuf,
       dzn_image_get_copy_loc(src_image, &region.imageSubresource, aspect, l);
    D3D12_TEXTURE_COPY_LOCATION dst_buf_loc =
       dzn_buffer_get_copy_loc(dst_buffer, src_image->vk.format, &region, aspect, l);
+
+   uint32_t mip = region.imageSubresource.mipLevel;
+   if ((src_image->desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) &&
+       (region.imageOffset.x || region.imageOffset.y ||
+        region.imageExtent.width != u_minify(src_image->vk.extent.width, mip) ||
+        region.imageExtent.height != u_minify(src_image->vk.extent.height, mip))) {
+      dzn_cmd_buffer_copy_partial_ds_img2buf(cmdbuf, src_image, &region, aspect,
+                                             &src_img_loc, &dst_buf_loc);
+      return;
+   }
 
    if (dzn_buffer_supports_region_copy(pdev, &dst_buf_loc)) {
       /* RowPitch and Offset are properly aligned on 256 bytes, we can copy
