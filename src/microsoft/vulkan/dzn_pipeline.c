@@ -201,6 +201,16 @@ to_dxil_shader_stage(VkShaderStageFlagBits in)
    }
 }
 
+/* Some drivers without 16-bit min-precision support reject DXIL that uses
+ * min-precision types, so such devices must not get any 16-bit values.
+ */
+static bool
+dzn_no_16bit_shader_types(const struct dzn_physical_device *pdev)
+{
+   return !pdev->options4.Native16BitShaderOpsSupported &&
+          !(pdev->options.MinPrecisionSupport & D3D12_SHADER_MIN_PRECISION_SUPPORT_16_BIT);
+}
+
 struct dzn_nir_options {
    enum dxil_spirv_yz_flip_mode yz_flip_mode;
    uint16_t y_flip_mask, z_flip_mask;
@@ -238,11 +248,15 @@ dzn_pipeline_get_nir_shader(struct dzn_device *device,
 
    struct dzn_physical_device *pdev =
       container_of(device->vk.physical, struct dzn_physical_device, vk);
-   const struct spirv_to_nir_options *spirv_opts = dxil_spirv_nir_get_spirv_options();
+   struct spirv_to_nir_options spirv_opts = *dxil_spirv_nir_get_spirv_options();
+   if (dzn_no_16bit_shader_types(pdev)) {
+      spirv_opts.mediump_16bit_alu = false;
+      spirv_opts.mediump_16bit_derivatives = false;
+   }
 
    VkResult result =
       vk_pipeline_shader_stage_to_nir(&device->vk, pipeline_flags, stage_info,
-                                      spirv_opts, options->nir_opts, NULL, nir);
+                                      &spirv_opts, options->nir_opts, NULL, nir);
    if (result != VK_SUCCESS)
       return result;
 
@@ -425,7 +439,8 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
       /* Don't lower 16-bit types if they can only come from min-precision */
          (device->vk.enabled_extensions.KHR_shader_float16_int8 ||
           device->vk.enabled_features.shaderFloat16 ||
-          device->vk.enabled_features.shaderInt16),
+          device->vk.enabled_features.shaderInt16 ||
+          dzn_no_16bit_shader_types(pdev)),
       .shader_model_max = dzn_get_shader_model(pdev),
       .input_clip_size = input_clip_size,
       .advanced_texture_ops = pdev->options14.AdvancedTextureOpsSupported,
