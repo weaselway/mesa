@@ -1033,7 +1033,7 @@ dxil_spirv_nir_passes(nir_shader *nir,
       NIR_PASS(_, nir, nir_split_struct_vars, nir_var_mem_shared);
       NIR_PASS(_, nir, dxil_nir_flatten_var_arrays, nir_var_mem_shared);
       NIR_PASS(_, nir, dxil_nir_lower_var_bit_size, nir_var_mem_shared,
-                 conf->shader_model_max >= SHADER_MODEL_6_2 ? 16 : 32, 64);
+                 conf->shader_model_max >= SHADER_MODEL_6_2 && !conf->no_native_16bit ? 16 : 32, 64);
    }
 
    NIR_PASS(_, nir, dxil_nir_lower_int_cubemaps, false);
@@ -1099,7 +1099,7 @@ dxil_spirv_nir_passes(nir_shader *nir,
    NIR_PASS(_, nir, nir_split_struct_vars, nir_var_function_temp);
    NIR_PASS(_, nir, dxil_nir_flatten_var_arrays, nir_var_function_temp);
    NIR_PASS(_, nir, dxil_nir_lower_var_bit_size, nir_var_function_temp,
-              conf->shader_model_max >= SHADER_MODEL_6_2 ? 16 : 32, 64);
+              conf->shader_model_max >= SHADER_MODEL_6_2 && !conf->no_native_16bit ? 16 : 32, 64);
 
    NIR_PASS(_, nir, nir_lower_doubles, NULL, nir->options->lower_doubles_options);
 
