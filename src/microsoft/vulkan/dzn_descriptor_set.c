@@ -871,6 +871,7 @@ dzn_pipeline_layout_create(struct dzn_device *device,
       root_param->ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
       root_param->Constants.ShaderRegister = 0;
       root_param->Constants.Num32BitValues = align(push_constant_size, 4) / 4;
+      layout->root.push_constant_dwords = root_param->Constants.Num32BitValues;
       root_param->Constants.RegisterSpace = DZN_REGISTER_SPACE_PUSH_CONSTANT;
       root_param->ShaderVisibility = translate_desc_visibility(push_constant_flags);
       root_dwords += root_param->Constants.Num32BitValues;
