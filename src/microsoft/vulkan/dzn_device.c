@@ -1653,8 +1653,12 @@ dzn_physical_device_get_image_format_properties(struct dzn_physical_device *pdev
        !(dfmt_info.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD))
       return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
+   /* Input attachments also need color or depth-stencil attachment support. */
    if ((usage & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) &&
-       (!(dfmt_info.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD) || is_bgra4))
+       (!(dfmt_info.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD) ||
+        !(dfmt_info.Support1 & (D3D12_FORMAT_SUPPORT1_RENDER_TARGET |
+                                D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL)) ||
+        is_bgra4))
       return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
    if ((usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) &&
