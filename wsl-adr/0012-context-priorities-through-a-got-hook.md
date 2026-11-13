@@ -39,6 +39,9 @@ handles never leave `libd3d12core.so`, which creates them through
 - The hook depends on how `libd3d12core.so` is linked: lazy binding with a
   writable GOT, and loaded by the plain name. If a WSL update changes this,
   Mesa logs a warning and all contexts stay at 0.
+- Once a hook is in, the Mesa library that holds it stays loaded until the
+  process exits (`wsl_got_pin_self()`), so a patched slot never points into
+  an unloaded or reloaded copy. The same goes for the hooks of 0016.
 - The vendor driver creates further contexts through `libdxcore.so`
   directly. The hook does not see them; they stay at 0.
 - A priority only helps as far as the GPU preempts. On a GPU that preempts

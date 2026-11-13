@@ -60,6 +60,9 @@ node (dxgdrm 0008), and sync files from queue fences through eventfds
 - X11 clients get DRI3 with syncobjs through Xwayland.
 - `OPAQUE_FD` semaphores on that adapter are syncobj fds, not D3D12 shared
   handles. Interop that opens them as shared handles breaks there.
+- On other adapters dzn offers no `OPAQUE_FD` semaphores or fences at all:
+  WSL's D3D12 cannot open a shared fence handle (`OpenSharedHandle` returns
+  `E_INVALIDARG`), so their import never worked.
 - Clients on another adapter still go through shm and its upload.
 - The compositor must run a Mesa with the importer change, and client and
   compositor must agree on the default adapter. A compositor on another
