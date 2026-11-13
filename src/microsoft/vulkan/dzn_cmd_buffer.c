@@ -3424,9 +3424,10 @@ dzn_cmd_buffer_resolve_region(struct dzn_cmd_buffer *cmdbuf,
       for (uint32_t layer = 0; layer < layer_count; layer++) {
          float src_z_coord = layer;
 
+         /* dstOffset.z selects the slice of a 3D destination, it is 0 otherwise */
          dzn_cmd_buffer_blit_prepare_dst_view(cmdbuf,
                                               dst, dst_format, aspect, region->dstSubresource.mipLevel,
-                                              region->dstSubresource.baseArrayLayer + layer,
+                                              region->dstSubresource.baseArrayLayer + region->dstOffset.z + layer,
                                               dst_offset);
          ID3D12GraphicsCommandList1_SetGraphicsRoot32BitConstants(cmdbuf->cmdlist, 1, 1, &src_z_coord, 16);
          if (!device->support_static_samplers) {
@@ -5040,8 +5041,11 @@ dzn_cmd_buffer_resolve_rendering_attachment(struct dzn_cmd_buffer *cmdbuf,
       .layerCount = MIN2(src->vk.layer_count, dst->vk.layer_count),
    };
    if (dst_img->desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D) {
-      dst_range.baseArrayLayer = 0;
-      dst_range.layerCount = 1;
+      /* ResolveSubresource can't write a single slice of a 3D image, blit
+       * to the slice the view selects.
+       */
+      dzn_cmd_buffer_resolve_rendering_attachment_via_blit(cmdbuf, att, aspect, &src_range, &dst_range);
+      return;
    }
 
    if (force_blit_resolve ||
