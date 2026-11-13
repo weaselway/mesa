@@ -1143,8 +1143,14 @@ dzn_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
 
    for (uint32_t i = 0; i < info->imageMemoryBarrierCount; i++) {
       const VkImageMemoryBarrier2 *ibarrier = &info->pImageMemoryBarriers[i];
-      const VkImageSubresourceRange *range = &ibarrier->subresourceRange;
       VK_FROM_HANDLE(dzn_image, image, ibarrier->image);
+      /* The runtime passes the depth slices of a 3D image as layers */
+      VkImageSubresourceRange range_3d = ibarrier->subresourceRange;
+      if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
+         range_3d.baseArrayLayer = 0;
+         range_3d.layerCount = 1;
+      }
+      const VkImageSubresourceRange *range = &range_3d;
 
       VkImageLayout old_layout = ibarrier->oldLayout;
       VkImageLayout new_layout = ibarrier->newLayout;
@@ -1582,7 +1588,13 @@ dzn_CmdPipelineBarrier2_enhanced(VkCommandBuffer commandBuffer,
          continue;
       }
 
-      const VkImageSubresourceRange *range = &info->pImageMemoryBarriers[i].subresourceRange;
+      /* The runtime passes the depth slices of a 3D image as layers */
+      VkImageSubresourceRange range_3d = info->pImageMemoryBarriers[i].subresourceRange;
+      if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
+         range_3d.baseArrayLayer = 0;
+         range_3d.layerCount = 1;
+      }
+      const VkImageSubresourceRange *range = &range_3d;
       const bool simultaneous_access = image->desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
 
       bool need_separate_aspect_barriers =
@@ -2223,12 +2235,19 @@ dzn_cmd_buffer_clear_attachment(struct dzn_cmd_buffer *cmdbuf,
                                               &value->color,
                                               &range, rect_count, rects);
       } else {
+         /* Layers of a 2D view of a 3D image are depth slices of one subresource */
+         VkImageSubresourceRange barrier_range = range;
+         if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
+            barrier_range.baseArrayLayer = 0;
+            barrier_range.layerCount = 1;
+         }
+
          if (cmdbuf->enhanced_barriers) {
             restore_layout = dzn_cmd_buffer_require_layout(cmdbuf, image,
                                                            layout, D3D12_BARRIER_LAYOUT_RENDER_TARGET,
-                                                           &range);
+                                                           &barrier_range);
          } else {
-            dzn_cmd_buffer_queue_image_range_layout_transition(cmdbuf, image, &range,
+            dzn_cmd_buffer_queue_image_range_layout_transition(cmdbuf, image, &barrier_range,
                                                                layout,
                                                                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                                                DZN_QUEUE_TRANSITION_FLUSH);
@@ -2244,9 +2263,9 @@ dzn_cmd_buffer_clear_attachment(struct dzn_cmd_buffer *cmdbuf,
             dzn_cmd_buffer_restore_layout(cmdbuf, image,
                                           D3D12_BARRIER_SYNC_RENDER_TARGET, D3D12_BARRIER_ACCESS_RENDER_TARGET,
                                           D3D12_BARRIER_LAYOUT_RENDER_TARGET, restore_layout,
-                                          &range);
+                                          &barrier_range);
          } else {
-            dzn_cmd_buffer_queue_image_range_layout_transition(cmdbuf, image, &range,
+            dzn_cmd_buffer_queue_image_range_layout_transition(cmdbuf, image, &barrier_range,
                                                                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                                                layout,
                                                                DZN_QUEUE_TRANSITION_FLUSH);
