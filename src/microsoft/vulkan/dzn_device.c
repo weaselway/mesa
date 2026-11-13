@@ -2394,7 +2394,8 @@ dzn_queue_submit(struct vk_queue *q,
          container_of(info->command_buffers[i], struct dzn_cmd_buffer, vk);
 
       util_dynarray_foreach(&cmd_buffer->events.signal, struct dzn_cmd_event_signal, evt) {
-         if (FAILED(ID3D12CommandQueue_Signal(queue->cmdqueue, evt->event->fence, evt->value ? 1 : 0)))
+         if (FAILED(ID3D12CommandQueue_Signal(queue->cmdqueue, evt->event->fence,
+                                             dzn_event_next_value(evt->event, evt->value))))
             result = vk_error(device, VK_ERROR_UNKNOWN);
       }
 
@@ -3854,6 +3855,29 @@ dzn_DestroyEvent(VkDevice device,
    dzn_event_destroy(dzn_event_from_handle(event), pAllocator);
 }
 
+uint64_t
+dzn_event_next_value(struct dzn_event *event, bool set)
+{
+   uint64_t cur = __atomic_load_n(&event->value, __ATOMIC_RELAXED), next;
+   do {
+      next = cur + 1 + ((cur & 1) == set);
+   } while (!__atomic_compare_exchange_n(&event->value, &cur, next, true,
+                                         __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+   return next;
+}
+
+/* WSL applies a CPU signal asynchronously, so wait for it to show. */
+static VkResult
+dzn_event_signal(struct dzn_device *device, struct dzn_event *event, bool set)
+{
+   uint64_t value = dzn_event_next_value(event, set);
+   if (FAILED(ID3D12Fence_Signal(event->fence, value)) ||
+       FAILED(ID3D12Fence_SetEventOnCompletion(event->fence, value, NULL)))
+      return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+
+   return VK_SUCCESS;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL
 dzn_ResetEvent(VkDevice dev,
                VkEvent evt)
@@ -3861,10 +3885,7 @@ dzn_ResetEvent(VkDevice dev,
    VK_FROM_HANDLE(dzn_device, device, dev);
    VK_FROM_HANDLE(dzn_event, event, evt);
 
-   if (FAILED(ID3D12Fence_Signal(event->fence, 0)))
-      return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-
-   return VK_SUCCESS;
+   return dzn_event_signal(device, event, false);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -3874,10 +3895,7 @@ dzn_SetEvent(VkDevice dev,
    VK_FROM_HANDLE(dzn_device, device, dev);
    VK_FROM_HANDLE(dzn_event, event, evt);
 
-   if (FAILED(ID3D12Fence_Signal(event->fence, 1)))
-      return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-
-   return VK_SUCCESS;
+   return dzn_event_signal(device, event, true);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -3886,8 +3904,8 @@ dzn_GetEventStatus(VkDevice device,
 {
    VK_FROM_HANDLE(dzn_event, event, evt);
 
-   return ID3D12Fence_GetCompletedValue(event->fence) == 0 ?
-          VK_EVENT_RESET : VK_EVENT_SET;
+   return ID3D12Fence_GetCompletedValue(event->fence) & 1 ?
+          VK_EVENT_SET : VK_EVENT_RESET;
 }
 
 VKAPI_ATTR void VKAPI_CALL
