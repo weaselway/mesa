@@ -3,7 +3,7 @@
 A compile check for this fork, using the dev shell in [flake.nix](flake.nix)
 (nixpkgs `nixos-26.05`). Nothing is installed. What ships is built by the
 [weaselway](https://github.com/weaselway/weaselway) flake, from a release
-branch (now `mesa-26.2.6-wsl`), with nixpkgs' Mesa package definition.
+branch (now `mesa-26.2.7-wsl`), with nixpkgs' Mesa package definition.
 
 ```sh
 ./weaselway-build.sh
