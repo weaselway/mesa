@@ -2193,11 +2193,13 @@ dzn_cmd_buffer_clear_attachment(struct dzn_cmd_buffer *cmdbuf,
       VkClearColorValue color = adjust_clear_color(pdev, view->vk.format, &value->color);
       bool clear_with_cpy = false;
       float vals[4];
+      /* Channels the format lacks may hold values a float can't represent */
+      uint32_t comps = vk_format_get_nr_components(view->vk.format);
 
       if (vk_format_is_sint(view->vk.format)) {
          for (uint32_t i = 0; i < 4; i++) {
             vals[i] = color.int32[i];
-            if (color.int32[i] != (int32_t)vals[i]) {
+            if (i < comps && color.int32[i] != (int32_t)vals[i]) {
                clear_with_cpy = true;
                break;
             }
@@ -2205,7 +2207,7 @@ dzn_cmd_buffer_clear_attachment(struct dzn_cmd_buffer *cmdbuf,
       } else if (vk_format_is_uint(view->vk.format)) {
          for (uint32_t i = 0; i < 4; i++) {
             vals[i] = color.uint32[i];
-            if (color.uint32[i] != (uint32_t)vals[i]) {
+            if (i < comps && color.uint32[i] != (uint32_t)vals[i]) {
                clear_with_cpy = true;
                break;
             }
@@ -2273,12 +2275,14 @@ dzn_cmd_buffer_clear_color(struct dzn_cmd_buffer *cmdbuf,
    float clear_vals[4];
 
    enum pipe_format pfmt = vk_format_to_pipe_format(image->vk.format);
+   /* Channels the format lacks may hold values a float can't represent */
+   uint32_t comps = util_format_get_nr_components(pfmt);
    D3D12_BARRIER_LAYOUT restore_layout = D3D12_BARRIER_LAYOUT_COMMON;
 
    if (util_format_is_pure_sint(pfmt)) {
       for (uint32_t c = 0; c < ARRAY_SIZE(clear_vals); c++) {
          clear_vals[c] = color.int32[c];
-         if (color.int32[c] != (int32_t)clear_vals[c]) {
+         if (c < comps && color.int32[c] != (int32_t)clear_vals[c]) {
             dzn_cmd_buffer_clear_ranges_with_copy(cmdbuf, image, layout, col, range_count, ranges);
             return;
          }
@@ -2286,7 +2290,7 @@ dzn_cmd_buffer_clear_color(struct dzn_cmd_buffer *cmdbuf,
    } else if (util_format_is_pure_uint(pfmt)) {
       for (uint32_t c = 0; c < ARRAY_SIZE(clear_vals); c++) {
          clear_vals[c] = color.uint32[c];
-         if (color.uint32[c] != (uint32_t)clear_vals[c]) {
+         if (c < comps && color.uint32[c] != (uint32_t)clear_vals[c]) {
             dzn_cmd_buffer_clear_ranges_with_copy(cmdbuf, image, layout, col, range_count, ranges);
             return;
          }
