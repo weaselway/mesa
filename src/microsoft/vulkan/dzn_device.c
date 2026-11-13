@@ -74,6 +74,7 @@
 #include "vk_drm_syncobj.h"
 #include "wsl_dxgdrm.h"
 #include "wsl_eventfd.h"
+#include "wsl_sandbox.h"
 #endif
 
 #define DZN_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
@@ -1958,6 +1959,7 @@ dzn_instance_create(const VkInstanceCreateInfo *pCreateInfo,
       return vk_error(NULL, VK_ERROR_INITIALIZATION_FAILED);
    }
 
+   wsl_sandbox_init();
    instance->d3d12_mod = util_dl_open(UTIL_DL_PREFIX "d3d12" UTIL_DL_EXT);
    if (!instance->d3d12_mod) {
       dzn_instance_destroy(instance, pAllocator);
