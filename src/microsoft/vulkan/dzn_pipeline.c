@@ -269,6 +269,7 @@ dzn_pipeline_get_nir_shader(struct dzn_device *device,
       .lower_view_index = options->lower_view_index,
       .lower_view_index_to_rt_layer = options->lower_view_index_to_rt_layer,
       .shader_model_max = dzn_get_shader_model(pdev),
+      .no_native_16bit = !pdev->options4.Native16BitShaderOpsSupported,
    };
 
    dxil_spirv_nir_passes(*nir, &conf, metadata);

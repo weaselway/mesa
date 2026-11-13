@@ -199,6 +199,10 @@ struct dxil_spirv_runtime_conf {
 
    // Affects which features can be used by the shader
    enum dxil_shader_model shader_model_max;
+
+   // The device has no native 16-bit ops, so small local and shared
+   // variables are widened to 32 bits instead of 16
+   bool no_native_16bit;
 };
 
 struct dxil_spirv_debug_options {
