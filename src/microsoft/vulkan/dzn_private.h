@@ -1308,8 +1308,14 @@ struct dzn_instance {
 
 struct dzn_event {
    struct vk_object_base base;
+   /* Odd values mean set. The value only grows, so that a CPU signal can be
+    * waited for.
+    */
    ID3D12Fence *fence;
+   uint64_t value;
 };
+
+uint64_t dzn_event_next_value(struct dzn_event *event, bool set);
 
 struct dzn_sync {
    struct vk_sync vk;
