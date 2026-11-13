@@ -3769,6 +3769,10 @@ dzn_cmd_buffer_update_scissors(struct dzn_cmd_buffer *cmdbuf)
       scissors[i].top = MAX2(scissors[i].top, cmdbuf->state.render.area.top);
       scissors[i].right = MIN2(scissors[i].right, cmdbuf->state.render.area.right);
       scissors[i].bottom = MIN2(scissors[i].bottom, cmdbuf->state.render.area.bottom);
+
+      /* NVIDIA doesn't scissor anything with an all-zero rect, use another empty one. */
+      if (scissors[i].right <= scissors[i].left || scissors[i].bottom <= scissors[i].top)
+         scissors[i] = (D3D12_RECT){ 1, 1, 1, 1 };
    }
 
    ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, pipeline->scissor.count, scissors);
