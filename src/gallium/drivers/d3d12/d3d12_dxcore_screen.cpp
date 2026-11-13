@@ -30,6 +30,7 @@
 
 #include <directx/dxcore.h>
 #include "wsl_default_adapter.h"
+#include "wsl_sandbox.h"
 #include <dxguids/dxguids.h>
 
 static IDXCoreAdapterFactory *
@@ -38,6 +39,7 @@ get_dxcore_factory()
    typedef HRESULT(WINAPI *PFN_CREATE_DXCORE_ADAPTER_FACTORY)(REFIID riid, void **ppFactory);
    PFN_CREATE_DXCORE_ADAPTER_FACTORY DXCoreCreateAdapterFactory;
 
+   wsl_sandbox_init();
    util_dl_library *dxcore_mod = util_dl_open(UTIL_DL_PREFIX "dxcore" UTIL_DL_EXT);
    if (!dxcore_mod) {
       debug_printf("D3D12: failed to load DXCore.DLL\n");

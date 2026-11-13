@@ -25,6 +25,7 @@
 #include <directx/dxcore.h>
 #include <dxguids/dxguids.h>
 #include "wsl_default_adapter.h"
+#include "wsl_sandbox.h"
 
 #include "util/u_dl.h"
 #include "util/log.h"
@@ -32,6 +33,7 @@
 VkResult
 dzn_enumerate_physical_devices_dxcore(struct vk_instance *instance)
 {
+   wsl_sandbox_init();
    util_dl_library *dxcore = util_dl_open(UTIL_DL_PREFIX "dxcore" UTIL_DL_EXT);
    if (!dxcore) {
       mesa_loge("Failed to load DXCore\n");
