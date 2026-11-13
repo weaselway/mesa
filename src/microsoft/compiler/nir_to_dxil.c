@@ -2495,6 +2495,10 @@ emit_cast(struct ntd_context *ctx, nir_alu_instr *alu,
       case nir_op_i2fmp:
       case nir_op_u2fmp:
          break;
+      /* As f2imp: out-of-range results are undefined, so min precision does. */
+      case nir_op_f2i16:
+      case nir_op_f2u16:
+         break;
       default:
          ctx->mod.feats.native_low_precision = true;
       }
