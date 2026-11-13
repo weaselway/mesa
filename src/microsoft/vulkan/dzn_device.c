@@ -3589,6 +3589,8 @@ dzn_buffer_get_copy_loc(const struct dzn_buffer *buf,
       container_of(buf->base.device->physical, struct dzn_physical_device, vk);
    const uint32_t buffer_row_length =
       region->bufferRowLength ? region->bufferRowLength : region->imageExtent.width;
+   const uint32_t buffer_image_height =
+      region->bufferImageHeight ? region->bufferImageHeight : region->imageExtent.height;
 
    VkFormat plane_format = dzn_image_get_plane_format(format, aspect);
 
@@ -3614,7 +3616,7 @@ dzn_buffer_get_copy_loc(const struct dzn_buffer *buf,
 
    uint32_t buffer_layer_stride =
       loc.PlacedFootprint.Footprint.RowPitch *
-      DIV_ROUND_UP(loc.PlacedFootprint.Footprint.Height, blkh);
+      DIV_ROUND_UP(buffer_image_height, blkh);
 
    loc.PlacedFootprint.Offset =
       region->bufferOffset + (layer * buffer_layer_stride);
