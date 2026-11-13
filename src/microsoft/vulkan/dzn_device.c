@@ -1364,6 +1364,14 @@ dzn_physical_device_get_format_support(struct dzn_physical_device *pdev,
                                         &dfmt_info, sizeof(dfmt_info));
    assert(!FAILED(hres));
 
+   /* NVIDIA (GeForce 940MX, driver 32.0.15.8266) loses the device when
+    * filling a mipmapped 3-component 32-bit texture, and repeated losses end
+    * in a bugcheck. The GL driver never makes such textures either.
+    */
+   if (pdev->desc.vendor_id == 0x10de &&
+       dzn_get_typeless_dxgi_format(dfmt_info.Format) == DXGI_FORMAT_R32G32B32_TYPELESS)
+      dfmt_info.Support1 &= D3D12_FORMAT_SUPPORT1_BUFFER | D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER;
+
    if (usage != VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
       return dfmt_info;
 
@@ -1420,19 +1428,22 @@ dzn_physical_device_get_format_properties(struct dzn_physical_device *pdev,
       return;
    }
 
+#define TEX_FLAGS (D3D12_FORMAT_SUPPORT1_TEXTURE1D | \
+                   D3D12_FORMAT_SUPPORT1_TEXTURE2D | \
+                   D3D12_FORMAT_SUPPORT1_TEXTURE3D | \
+                   D3D12_FORMAT_SUPPORT1_TEXTURECUBE)
+   /* Without any texture type no image can be created, not even for copies. */
+   VkFormatFeatureFlags tiling_features = (dfmt_info.Support1 & TEX_FLAGS) ?
+      VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT : 0;
    *base_props = (VkFormatProperties) {
-      .linearTilingFeatures = VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT,
-      .optimalTilingFeatures = VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT,
+      .linearTilingFeatures = tiling_features,
+      .optimalTilingFeatures = tiling_features,
       .bufferFeatures = VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT,
    };
 
    if (dfmt_info.Support1 & D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER)
       base_props->bufferFeatures |= VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
 
-#define TEX_FLAGS (D3D12_FORMAT_SUPPORT1_TEXTURE1D | \
-                   D3D12_FORMAT_SUPPORT1_TEXTURE2D | \
-                   D3D12_FORMAT_SUPPORT1_TEXTURE3D | \
-                   D3D12_FORMAT_SUPPORT1_TEXTURECUBE)
    if ((dfmt_info.Support1 & TEX_FLAGS) &&
        (dfmt_info.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD)) {
       base_props->optimalTilingFeatures |=
