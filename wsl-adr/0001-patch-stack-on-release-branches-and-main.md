@@ -18,7 +18,7 @@ them on `main`.
 - For each Mesa release weaselway builds, a `mesa-X.Y.Z-wsl` branch carries
   the stack on the upstream tag. weaselway's `mesa-src` input follows that
   branch (weaselway 0015). The release can be newer than nixpkgs' Mesa: the
-  image builds 26.2.6 with the package definition of nixpkgs' 26.1.8.
+  image builds 26.2.7 with the package definition of nixpkgs' 26.1.8.
 - `main` carries the same stack on upstream `main`, rebased when upstream
   moves. The next release branch is cut from it.
 - A change goes onto the release branch weaselway builds and onto `main`. A
