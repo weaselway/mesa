@@ -575,6 +575,16 @@ dzn_pipeline_layout_destroy(struct vk_device *vk_device,
 // Maximum number of DWORDS (32-bit words) that can be used for a root signature
 #define MAX_ROOT_DWORDS 64
 
+/* pSetLayouts may contain VK_NULL_HANDLE; treat those as empty sets. */
+static const struct dzn_descriptor_set_layout *
+dzn_set_layout_or_empty(VkDescriptorSetLayout handle)
+{
+   static const struct dzn_descriptor_set_layout empty;
+   VK_FROM_HANDLE(dzn_descriptor_set_layout, set_layout, handle);
+
+   return set_layout ? set_layout : &empty;
+}
+
 static void
 dzn_pipeline_layout_hash_stages(struct dzn_pipeline_layout *layout,
                                 const VkPipelineLayoutCreateInfo *info)
@@ -582,7 +592,8 @@ dzn_pipeline_layout_hash_stages(struct dzn_pipeline_layout *layout,
    uint32_t stages = 0;
    for (uint32_t stage = 0; stage < ARRAY_SIZE(layout->stages); stage++) {
       for (uint32_t set = 0; set < info->setLayoutCount; set++) {
-         VK_FROM_HANDLE(dzn_descriptor_set_layout, set_layout, info->pSetLayouts[set]);
+         const struct dzn_descriptor_set_layout *set_layout =
+            dzn_set_layout_or_empty(info->pSetLayouts[set]);
 
          stages |= set_layout->stages;
       }
@@ -596,7 +607,8 @@ dzn_pipeline_layout_hash_stages(struct dzn_pipeline_layout *layout,
 
       _mesa_blake3_init(&ctx);
       for (uint32_t set = 0; set < info->setLayoutCount; set++) {
-         VK_FROM_HANDLE(dzn_descriptor_set_layout, set_layout, info->pSetLayouts[set]);
+         const struct dzn_descriptor_set_layout *set_layout =
+            dzn_set_layout_or_empty(info->pSetLayouts[set]);
          if (!(BITFIELD_BIT(stage) & set_layout->stages))
             continue;
 
@@ -662,7 +674,8 @@ dzn_pipeline_layout_create(struct dzn_device *device,
 
    layout->set_count = pCreateInfo->setLayoutCount;
    for (uint32_t j = 0; j < layout->set_count; j++) {
-      VK_FROM_HANDLE(dzn_descriptor_set_layout, set_layout, pCreateInfo->pSetLayouts[j]);
+      const struct dzn_descriptor_set_layout *set_layout =
+         dzn_set_layout_or_empty(pCreateInfo->pSetLayouts[j]);
       uint32_t *binding_trans = layout->binding_translation[j].base_reg;
 
       layout->sets[j].dynamic_buffer_count = set_layout->dynamic_buffers.count;
@@ -764,7 +777,8 @@ dzn_pipeline_layout_create(struct dzn_device *device,
             root_param->ShaderVisibility = (D3D12_SHADER_VISIBILITY)i;
 
             for (uint32_t j = 0; j < pCreateInfo->setLayoutCount; j++) {
-               VK_FROM_HANDLE(dzn_descriptor_set_layout, set_layout, pCreateInfo->pSetLayouts[j]);
+               const struct dzn_descriptor_set_layout *set_layout =
+                  dzn_set_layout_or_empty(pCreateInfo->pSetLayouts[j]);
                uint32_t range_count = set_layout->range_count[i][type];
 
                memcpy(range_ptr, set_layout->ranges[i][type],
@@ -816,7 +830,8 @@ dzn_pipeline_layout_create(struct dzn_device *device,
    if (pdev->root_sig_version >= D3D_ROOT_SIGNATURE_VERSION_1_2) {
       D3D12_STATIC_SAMPLER_DESC1 *static_sampler_ptr = static_sampler_descs;
       for (uint32_t j = 0; j < pCreateInfo->setLayoutCount; j++) {
-         VK_FROM_HANDLE(dzn_descriptor_set_layout, set_layout, pCreateInfo->pSetLayouts[j]);
+         const struct dzn_descriptor_set_layout *set_layout =
+            dzn_set_layout_or_empty(pCreateInfo->pSetLayouts[j]);
 
          memcpy(static_sampler_ptr, set_layout->static_samplers,
                 set_layout->static_sampler_count * sizeof(*set_layout->static_samplers));
@@ -829,7 +844,8 @@ dzn_pipeline_layout_create(struct dzn_device *device,
    } else {
       D3D12_STATIC_SAMPLER_DESC *static_sampler_ptr = (void *)static_sampler_descs;
       for (uint32_t j = 0; j < pCreateInfo->setLayoutCount; j++) {
-         VK_FROM_HANDLE(dzn_descriptor_set_layout, set_layout, pCreateInfo->pSetLayouts[j]);
+         const struct dzn_descriptor_set_layout *set_layout =
+            dzn_set_layout_or_empty(pCreateInfo->pSetLayouts[j]);
 
          for (uint32_t k = 0; k < set_layout->static_sampler_count; k++) {
             memcpy(static_sampler_ptr, &set_layout->static_samplers[k],
