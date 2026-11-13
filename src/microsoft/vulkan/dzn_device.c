@@ -623,6 +623,12 @@ dzn_physical_device_init_memory(struct dzn_physical_device *pdev)
             D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES
          };
          for (int i = 0; i < ARRAY_SIZE(flags); ++i) {
+            /* vkMapMemory maps a buffer placed over the heap, which a texture-only
+             * heap cannot hold, so host-visible types are for buffers only.
+             */
+            if (flags[i] != D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS &&
+                (oldMemoryTypes[oldMemoryTypeIdx].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+               continue;
             D3D12_HEAP_FLAGS flag = flags[i];
             pdev->heap_flags_for_mem_type[mem->memoryTypeCount] = flag;
             mem->memoryTypes[mem->memoryTypeCount] = oldMemoryTypes[oldMemoryTypeIdx];
