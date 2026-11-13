@@ -7,6 +7,7 @@
 #include "wsl_got.h"
 
 #include <dlfcn.h>
+#include <errno.h>
 #include <libgen.h>
 #include <limits.h>
 #include <stdio.h>
@@ -68,11 +69,14 @@ install(void)
 {
    Dl_info info;
    char lib[PATH_MAX];
-   if (access(DXG, F_OK) == 0 || !dladdr((void *)wsl_sandbox_init, &info) ||
-       !info.dli_fname || snprintf(lib, sizeof(lib), "%s", info.dli_fname) >= (int)sizeof(lib))
+   if (!dladdr((void *)wsl_sandbox_init, &info) || !info.dli_fname ||
+       snprintf(lib, sizeof(lib), "%s", info.dli_fname) >= (int)sizeof(lib))
       return;
 
-   /* .../GL/host/lib/libgallium.so -> .../GL/host/wsl */
+   /* .../GL/host/lib/libgallium.so -> .../GL/host/wsl. Only the extension
+    * has one, so this is how we know we are in a sandbox: /dev/dxg can
+    * already be there, linked by an earlier process in the same sandbox.
+    */
    snprintf(root, sizeof(root), "%s/wsl", dirname(dirname(lib)));
    if (access(root, F_OK) != 0)
       return;
@@ -84,7 +88,8 @@ install(void)
    char core[PATH_MAX], d3d12[PATH_MAX];
    snprintf(core, sizeof(core), "%s/lib/libd3d12core.so", root);
    snprintf(d3d12, sizeof(d3d12), "%s/lib/libd3d12.so", root);
-   if ((access(SANDBOX_DXG, F_OK) == 0 && symlink("dri/dxg", DXG) != 0) ||
+   if ((access(DXG, F_OK) != 0 && access(SANDBOX_DXG, F_OK) == 0 &&
+        symlink("dri/dxg", DXG) != 0 && errno != EEXIST) ||
        !patch(core, "dlopen", (void *)hook_dlopen) || !dlopen(d3d12, RTLD_LAZY | RTLD_LOCAL))
       mesa_logw("wsl: cannot redirect WSL's paths into the sandbox, D3D12 will fail");
 }
