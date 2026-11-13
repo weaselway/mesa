@@ -3324,6 +3324,13 @@ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint
          /* Changing root signature always requires re-binding descriptor heaps */
          cmdbuf->state.bindpoint[bindpoint].dirty |= DZN_CMD_BINDPOINT_DIRTY_HEAPS;
 
+         /* It also clears the root constants, so push all of them again. */
+         struct dzn_cmd_buffer_push_constant_state *pc =
+            bindpoint == VK_PIPELINE_BIND_POINT_GRAPHICS ?
+            &cmdbuf->state.push_constant.gfx : &cmdbuf->state.push_constant.compute;
+         pc->offset = 0;
+         pc->end = sizeof(pc->values);
+
          if (device->bindless) {
             /* Note: The D3D12 spec for descriptor heap indexing requires that the descriptor heaps
              * are bound *before* the root signature. */
@@ -3647,13 +3654,15 @@ dzn_cmd_buffer_update_push_constants(struct dzn_cmd_buffer *cmdbuf, uint32_t bin
       bindpoint == VK_PIPELINE_BIND_POINT_GRAPHICS ?
       &cmdbuf->state.push_constant.gfx : &cmdbuf->state.push_constant.compute;
 
+   /* Keep the values pending until a pipeline with push constants is bound. */
+   uint32_t dwords = cmdbuf->state.pipeline->root.push_constant_dwords;
    uint32_t offset = state->offset / 4;
-   uint32_t end = align(state->end, 4) / 4;
-   uint32_t count = end - offset;
+   uint32_t end = MIN2(align(state->end, 4) / 4, dwords);
 
-   if (!count)
+   if (end <= offset)
       return;
 
+   uint32_t count = end - offset;
    uint32_t slot = cmdbuf->state.pipeline->root.push_constant_cbv_param_idx;
    uint32_t *vals = state->values + offset;
 

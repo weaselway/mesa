@@ -860,6 +860,7 @@ struct dzn_pipeline_layout {
       uint32_t sets_param_count;
       uint32_t sysval_cbv_param_idx;
       uint32_t push_constant_cbv_param_idx;
+      uint32_t push_constant_dwords;
       uint32_t dynamic_buffer_bindless_param_idx;
       D3D12_DESCRIPTOR_HEAP_TYPE type[MAX_SHADER_VISIBILITIES];
       ID3D12RootSignature *sig;
@@ -939,6 +940,7 @@ struct dzn_pipeline {
       uint32_t sets_param_count;
       uint32_t sysval_cbv_param_idx;
       uint32_t push_constant_cbv_param_idx;
+      uint32_t push_constant_dwords;
       uint32_t dynamic_buffer_bindless_param_idx;
       D3D12_DESCRIPTOR_HEAP_TYPE type[MAX_SHADER_VISIBILITIES];
       ID3D12RootSignature *sig;
