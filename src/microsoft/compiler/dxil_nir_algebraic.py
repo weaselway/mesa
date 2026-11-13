@@ -98,6 +98,14 @@ algebraic_ops = [
   (('b2b1', 'a'), ('ine', ('b2i32', a), 0)),
 ]
 
+# NVIDIA's FPToUI to 64 bits clamps at UINT32_MAX, FPToSI is fine.
+for sz in (32, 64):
+  algebraic_ops += [
+    (('f2u64', 'a@{}'.format(sz)),
+     ('bcsel', ('flt', a, 9223372036854775808.0), ('f2i64', a),
+      ('ior', ('f2i64', ('fadd', a, -9223372036854775808.0)), -0x8000000000000000))),
+  ]
+
 no_16bit_conv += [
   (('f2f32', ('u2u16', 'a@32')), ('unpack_half_x_dxil', a)),
   (('u2u32', ('f2f16_rtz', 'a@32')), ('pack_half_2x16_split', 'a', 0)),
