@@ -57,7 +57,7 @@ patch(const char *library, const char *name, void *hook)
       return false;
 
    void **slot = wsl_got_find_slot(lm, name);
-   if (!slot || wsl_got_is_relro(lm, slot))
+   if (!slot || wsl_got_is_relro(lm, slot) || !wsl_got_pin_self())
       return false;
 
    __atomic_store_n(slot, hook, __ATOMIC_RELEASE);
