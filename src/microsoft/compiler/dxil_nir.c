@@ -1615,8 +1615,7 @@ lower_fquantize2f16(struct nir_builder *b, nir_instr *instr, void *data)
     *      return round(val);
     */
    nir_alu_instr *alu = nir_instr_as_alu(instr);
-   nir_def *src =
-      alu->src[0].src.ssa;
+   nir_def *src = nir_ssa_for_alu_src(b, alu, 0);
 
    nir_def *neg_inf_cond =
       nir_flt_imm(b, src, -65504.0f);
