@@ -1851,12 +1851,13 @@ dzn_cmd_buffer_alloc_internal_buf(struct dzn_cmd_buffer *cmdbuf,
 static void
 dzn_cmd_buffer_clear_rects_with_copy(struct dzn_cmd_buffer *cmdbuf,
                                      const struct dzn_image *image,
+                                     VkFormat format,
                                      VkImageLayout layout,
                                      const VkClearColorValue *color,
                                      const VkImageSubresourceRange *range,
                                      uint32_t rect_count, D3D12_RECT *rects)
 {
-   enum pipe_format pfmt = vk_format_to_pipe_format(image->vk.format);
+   enum pipe_format pfmt = vk_format_to_pipe_format(format);
    uint32_t blksize = util_format_get_blocksize(pfmt);
    uint8_t buf[D3D12_TEXTURE_DATA_PITCH_ALIGNMENT * 3] = { 0 };
    uint32_t raw[4] = { 0 };
@@ -2215,7 +2216,7 @@ dzn_cmd_buffer_clear_attachment(struct dzn_cmd_buffer *cmdbuf,
       }
 
       if (clear_with_cpy) {
-         dzn_cmd_buffer_clear_rects_with_copy(cmdbuf, image,
+         dzn_cmd_buffer_clear_rects_with_copy(cmdbuf, image, view->vk.format,
                                               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                               &value->color,
                                               &range, rect_count, rects);
@@ -2232,6 +2233,8 @@ dzn_cmd_buffer_clear_attachment(struct dzn_cmd_buffer *cmdbuf,
          }
 
          D3D12_RENDER_TARGET_VIEW_DESC desc = dzn_image_get_rtv_desc(image, &range, 0);
+         desc.Format = dzn_image_get_dxgi_format(pdev, view->vk.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                                                 VK_IMAGE_ASPECT_COLOR_BIT);
          D3D12_CPU_DESCRIPTOR_HANDLE handle = dzn_cmd_buffer_get_rtv(cmdbuf, image, &desc);
          ID3D12GraphicsCommandList1_ClearRenderTargetView(cmdbuf->cmdlist, handle, vals, rect_count, rects);
 
