@@ -163,6 +163,11 @@ install(void)
       return;
    }
 
+   if (!wsl_got_pin_self()) {
+      mesa_logw("d3dkmt: cannot pin the driver library, priorities disabled");
+      return;
+   }
+
    __atomic_store_n(destroy_slot, (void *)hook_destroy_context, __ATOMIC_RELEASE);
    __atomic_store_n(create_slot, (void *)hook_create_context, __ATOMIC_RELEASE);
 }

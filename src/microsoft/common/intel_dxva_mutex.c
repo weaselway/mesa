@@ -76,7 +76,7 @@ patch(const char *path)
    void **slot = NULL;
    if (dlinfo(handle, RTLD_DI_LINKMAP, &lm) == 0)
       slot = wsl_got_find_slot(lm, "pthread_mutex_init");
-   if (!slot || *slot == (void *)recursive_mutex_init) {
+   if (!slot || *slot == (void *)recursive_mutex_init || !wsl_got_pin_self()) {
       dlclose(handle);
       return;
    }
