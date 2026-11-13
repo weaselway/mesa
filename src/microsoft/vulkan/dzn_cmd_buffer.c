@@ -4231,10 +4231,10 @@ dzn_CmdCopyImage2(VkCommandBuffer commandBuffer,
       }
    }
 
-   bool use_blit = false;
-   if (src->vk.samples > 1) {
-      use_blit = requires_temp_res;
-
+   bool use_blit = src->vk.samples > 1 && requires_temp_res;
+   /* D3D12 copies multisampled and depth-stencil resources only as whole subresources */
+   if (src->vk.samples > 1 ||
+       ((src->desc.Flags | dst->desc.Flags) & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) {
       for (int i = 0; i < info->regionCount; i++) {
          const VkImageCopy2 *region = info->pRegions + i;
          if (region->srcOffset.x != 0 || region->srcOffset.y != 0 ||
