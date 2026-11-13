@@ -65,6 +65,7 @@
 
 #include "git_sha1.h"
 #include "d3dkmt_priority.h"
+#include "wsl_sandbox.h"
 
 #if defined(_WIN32) && defined(_WIN64) && !defined(_GAMING_XBOX)
 #include <filesystem>
@@ -1541,6 +1542,7 @@ d3d12_init_screen_base(struct d3d12_screen *screen, struct sw_winsys *winsys, LU
 #endif
    screen->base.query_memory_info = d3d12_query_memory_info;
 
+   wsl_sandbox_init();
    screen->d3d12_mod = util_dl_open(
       UTIL_DL_PREFIX
 #ifdef _GAMING_XBOX_SCARLETT
