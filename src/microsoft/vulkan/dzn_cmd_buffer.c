@@ -2447,7 +2447,11 @@ dzn_cmd_buffer_copy_buf2img_region(struct dzn_cmd_buffer *cmdbuf,
    D3D12_TEXTURE_COPY_LOCATION src_buf_loc =
       dzn_buffer_get_copy_loc(src_buffer, dst_image->vk.format, &region, aspect, l);
 
-   if (dzn_buffer_supports_region_copy(pdev, &src_buf_loc)) {
+   /* Footprint slices are RowPitch * Height apart, so a larger
+    * bufferImageHeight needs the line-by-line copy.
+    */
+   if (dzn_buffer_supports_region_copy(pdev, &src_buf_loc) &&
+       !(region.imageExtent.depth > 1 && region.bufferImageHeight > region.imageExtent.height)) {
       /* RowPitch and Offset are properly aligned, we can copy
        * the whole thing in one call.
        */
@@ -2605,7 +2609,11 @@ dzn_cmd_buffer_copy_img2buf_region(struct dzn_cmd_buffer *cmdbuf,
       return;
    }
 
-   if (dzn_buffer_supports_region_copy(pdev, &dst_buf_loc)) {
+   /* Footprint slices are RowPitch * Height apart, so a larger
+    * bufferImageHeight needs the line-by-line copy.
+    */
+   if (dzn_buffer_supports_region_copy(pdev, &dst_buf_loc) &&
+       !(region.imageExtent.depth > 1 && region.bufferImageHeight > region.imageExtent.height)) {
       /* RowPitch and Offset are properly aligned on 256 bytes, we can copy
        * the whole thing in one call.
        */
