@@ -5,8 +5,17 @@
 
 #include "wsl_got.h"
 
+#include <dlfcn.h>
 #include <stdint.h>
 #include <string.h>
+
+bool
+wsl_got_pin_self(void)
+{
+   Dl_info self;
+   return dladdr((void *)wsl_got_pin_self, &self) && self.dli_fname &&
+          dlopen(self.dli_fname, RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE);
+}
 
 /* glibc stores absolute addresses in the dynamic section, other loaders keep
  * them relative to the load bias.
