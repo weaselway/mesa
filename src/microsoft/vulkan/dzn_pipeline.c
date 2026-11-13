@@ -905,6 +905,9 @@ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
          return VK_SUCCESS;
    }
 
+   if (pipeline->base.flags & VK_PIPELINE_CREATE_2_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_KHR)
+      return VK_PIPELINE_COMPILE_REQUIRED;
+
    /* Second step: get NIR shaders for all stages. */
    nir_shader_compiler_options nir_opts;
    unsigned supported_bit_sizes = (pdev->options4.Native16BitShaderOpsSupported ? 16 : 0) | 32 | 64;
@@ -1906,11 +1909,6 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
    HRESULT hres = 0;
    D3D12_VIEW_INSTANCE_LOCATION vi_locs[D3D12_MAX_VIEW_INSTANCE_COUNT];
 
-   /* shortcut: we report a compile even on a full cache hit, check the cache first if apps rely on it */
-   if (vk_graphics_pipeline_create_flags(pCreateInfo) &
-       VK_PIPELINE_CREATE_2_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_KHR)
-      return VK_PIPELINE_COMPILE_REQUIRED;
-
    struct dzn_graphics_pipeline *pipeline =
       vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
@@ -2409,12 +2407,14 @@ dzn_CreateGraphicsPipelines(VkDevice dev,
 
    unsigned i;
    for (i = 0; i < count; i++) {
-      result = dzn_graphics_pipeline_create(device,
-                                            pipelineCache,
-                                            &pCreateInfos[i],
-                                            pAllocator,
-                                            &pPipelines[i]);
-      if (result != VK_SUCCESS) {
+      VkResult ret = dzn_graphics_pipeline_create(device,
+                                                  pipelineCache,
+                                                  &pCreateInfos[i],
+                                                  pAllocator,
+                                                  &pPipelines[i]);
+      if (ret != VK_SUCCESS) {
+         /* Keep the failure even if later pipelines succeed. */
+         result = ret;
          pPipelines[i] = VK_NULL_HANDLE;
 
          /* Bail out on the first error != VK_PIPELINE_COMPILE_REQUIRED_EX as it
@@ -2547,6 +2547,9 @@ dzn_compute_pipeline_compile_shader(struct dzn_device *device,
          goto out;
    }
 
+   if (pipeline->base.flags & VK_PIPELINE_CREATE_2_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_KHR)
+      return VK_PIPELINE_COMPILE_REQUIRED;
+
    if (cache) {
       blake3_hasher nir_hash_ctx;
       _mesa_blake3_init(&nir_hash_ctx);
@@ -2622,11 +2625,6 @@ dzn_compute_pipeline_create(struct dzn_device *device,
 {
    VK_FROM_HANDLE(dzn_pipeline_layout, layout, pCreateInfo->layout);
    VK_FROM_HANDLE(vk_pipeline_cache, pcache, cache);
-
-   /* shortcut: same as dzn_graphics_pipeline_create */
-   if (vk_compute_pipeline_create_flags(pCreateInfo) &
-       VK_PIPELINE_CREATE_2_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_KHR)
-      return VK_PIPELINE_COMPILE_REQUIRED;
 
    struct dzn_compute_pipeline *pipeline =
       vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
@@ -2719,12 +2717,14 @@ dzn_CreateComputePipelines(VkDevice dev,
 
    unsigned i;
    for (i = 0; i < count; i++) {
-      result = dzn_compute_pipeline_create(device,
-                                           pipelineCache,
-                                           &pCreateInfos[i],
-                                           pAllocator,
-                                           &pPipelines[i]);
-      if (result != VK_SUCCESS) {
+      VkResult ret = dzn_compute_pipeline_create(device,
+                                                 pipelineCache,
+                                                 &pCreateInfos[i],
+                                                 pAllocator,
+                                                 &pPipelines[i]);
+      if (ret != VK_SUCCESS) {
+         /* Keep the failure even if later pipelines succeed. */
+         result = ret;
          pPipelines[i] = VK_NULL_HANDLE;
 
          /* Bail out on the first error != VK_PIPELINE_COMPILE_REQUIRED_EX as it
