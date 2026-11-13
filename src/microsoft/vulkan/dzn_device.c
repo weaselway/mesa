@@ -168,6 +168,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
 #if defined(_WIN32)
       .EXT_external_memory_host              = pdev->dev13,
 #endif
+      .EXT_pipeline_creation_cache_control   = true,
       .EXT_scalar_block_layout               = true,
       .EXT_separate_stencil_usage            = true,
       .EXT_shader_replicated_composites      = true,
@@ -829,7 +830,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
       .robustImageAccess                  = false,
       .inlineUniformBlock                 = false,
       .descriptorBindingInlineUniformBlockUpdateAfterBind = false,
-      .pipelineCreationCacheControl       = false,
+      .pipelineCreationCacheControl       = true,
       .privateData                        = true,
       .shaderDemoteToHelperInvocation     = false,
       .shaderTerminateInvocation          = false,
