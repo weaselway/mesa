@@ -3011,7 +3011,7 @@ dzn_cmd_buffer_blit_region(struct dzn_cmd_buffer *cmdbuf,
    const struct dzn_physical_device *pdev = container_of(device->vk.physical, struct dzn_physical_device, vk);
    bool support_stencil_blit = pdev->options.PSSpecifiedStencilRefSupported;
    uint32_t stencil_bit = support_stencil_blit ? 0xf : 0;
-   uint32_t stencil_bit_root_param_slot = 2;
+   uint32_t stencil_bit_root_param_slot = device->support_static_samplers ? 2 : 3;
    assert(device->support_static_samplers == (sampler_heap == NULL));
 
    dzn_foreach_aspect(aspect, region->srcSubresource.aspectMask) {
@@ -3067,7 +3067,6 @@ dzn_cmd_buffer_blit_region(struct dzn_cmd_buffer *cmdbuf,
          ID3D12GraphicsCommandList1_SetGraphicsRoot32BitConstants(cmdbuf->cmdlist, 1, 1, &src_z_coord, 16);
          if (!device->support_static_samplers) {
             ID3D12GraphicsCommandList1_SetGraphicsRootDescriptorTable(cmdbuf->cmdlist, 2, dzn_descriptor_heap_get_gpu_handle(sampler_heap, sampler_heap_slot));
-            stencil_bit_root_param_slot++;
          }
          if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT && !support_stencil_blit) {
             cmdbuf->state.dirty |= DZN_CMD_DIRTY_STENCIL_REF;
@@ -3124,7 +3123,7 @@ dzn_cmd_buffer_resolve_region(struct dzn_cmd_buffer *cmdbuf,
    const struct dzn_physical_device *pdev = container_of(device->vk.physical, struct dzn_physical_device, vk);
    bool support_stencil_blit = pdev->options.PSSpecifiedStencilRefSupported;
    uint32_t stencil_bit = support_stencil_blit ? 0xf : 0;
-   uint32_t stencil_bit_root_param_slot = 2;
+   uint32_t stencil_bit_root_param_slot = device->support_static_samplers ? 2 : 3;
    assert(device->support_static_samplers == (sampler_heap == NULL));
    enum dzn_blit_resolve_mode resolve_mode = get_blit_resolve_mode(mode);
 
@@ -3177,11 +3176,10 @@ dzn_cmd_buffer_resolve_region(struct dzn_cmd_buffer *cmdbuf,
          ID3D12GraphicsCommandList1_SetGraphicsRoot32BitConstants(cmdbuf->cmdlist, 1, 1, &src_z_coord, 16);
          if (!device->support_static_samplers) {
             ID3D12GraphicsCommandList1_SetGraphicsRootDescriptorTable(cmdbuf->cmdlist, 2, dzn_descriptor_heap_get_gpu_handle(sampler_heap, sampler_heap_slot));
-            stencil_bit_root_param_slot++;
          }
          if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT && !support_stencil_blit) {
             cmdbuf->state.dirty |= DZN_CMD_DIRTY_STENCIL_REF;
-            ID3D12GraphicsCommandList1_OMSetStencilRef(cmdbuf->cmdlist8, 0xff);
+            ID3D12GraphicsCommandList1_OMSetStencilRef(cmdbuf->cmdlist, 0xff);
             for (stencil_bit = 0; stencil_bit < 8; ++stencil_bit) {
                dzn_cmd_buffer_blit_set_pipeline(cmdbuf, src, dst_format, aspect, VK_FILTER_NEAREST, resolve_mode, stencil_bit);
                ID3D12GraphicsCommandList1_SetGraphicsRoot32BitConstant(cmdbuf->cmdlist, stencil_bit_root_param_slot, (1 << stencil_bit), 0);
