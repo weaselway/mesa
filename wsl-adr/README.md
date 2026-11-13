@@ -30,6 +30,7 @@ module in dxgdrm's `docs/adr`. They are referred to as "weaselway NNNN" and
 | [0013](0013-dzn-presents-through-dma-bufs.md) | dzn presents through dma-bufs from dxgdrm, synced through DRM syncobjs | Accepted |
 | [0014](0014-wayland-swap-interval-0-is-unthrottled.md) | Wayland swaps at interval 0 do not wait for the frame callback | Accepted |
 | [0015](0015-pipeline-state-blobs-in-a-disk-cache.md) | d3d12 keeps pipeline state blobs in a disk cache, except on NVIDIA | Accepted |
+| [0016](0016-flatpak-sandbox-reaches-wsl-through-the-gl-extension.md) | In a Flatpak sandbox, Mesa reaches WSL through its GL extension | Accepted |
 
 ## Known risks
 
@@ -63,5 +64,8 @@ Found while writing these records, details in the linked files:
   A field left out of it can load a blob made for other state, and D3D12
   does not promise to reject that
   ([0015](0015-pipeline-state-blobs-in-a-disk-cache.md)).
+- In a Flatpak sandbox, `libd3d12core.so` loads WSL's libraries through a
+  `dlopen` hook in its GOT, the same way as 0012
+  ([0016](0016-flatpak-sandbox-reaches-wsl-through-the-gl-extension.md)).
 - Each release branch is a separate rebase, and its commits can differ from
   those on `main` ([0001](0001-patch-stack-on-release-branches-and-main.md)).
