@@ -1930,7 +1930,7 @@ read_zs_surface(struct d3d12_context *ctx, struct d3d12_resource *res,
    case PIPE_FORMAT_Z24_UNORM_S8_UINT:
       if (screen->opts2.ProgrammableSamplePositionsTier == D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED) {
          depth_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x * 4;
-         stencil_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x * 4;
+         stencil_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x;
       }
       util_format_z24_unorm_s8_uint_pack_separate(buf, trans->zs_cpu_copy_stride,
                                                   (uint32_t *)depth_ptr, trans->base.b.stride,
@@ -2000,6 +2000,15 @@ write_zs_surface(struct pipe_context *pctx, struct d3d12_resource *res,
       return;
    }
 
+   /* Without PSP the whole level is written back, so read it first to keep
+    * the texels outside the box. */
+   if (screen->opts2.ProgrammableSamplePositionsTier == D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED) {
+      struct d3d12_context *ctx = d3d12_context(pctx);
+      transfer_image_to_buf(ctx, res, depth_buffer, trans, 0);
+      transfer_image_to_buf(ctx, res, stencil_buffer, trans, 1);
+      d3d12_flush_cmdlist_and_wait(ctx);
+   }
+
    uint8_t *depth_ptr = (uint8_t *)depth_buffer.map();
    if (!depth_ptr) {
       debug_printf("Mapping staging depth buffer failed\n");
@@ -2016,7 +2025,7 @@ write_zs_surface(struct pipe_context *pctx, struct d3d12_resource *res,
    case PIPE_FORMAT_Z24_UNORM_S8_UINT:
       if (screen->opts2.ProgrammableSamplePositionsTier == D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED) {
          depth_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x * 4;
-         stencil_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x * 4;
+         stencil_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x;
       }
       util_format_z32_unorm_unpack_z_32unorm((uint32_t *)depth_ptr, trans->base.b.stride, (uint8_t*)trans->data,
                                              trans->zs_cpu_copy_stride, trans->base.b.box.width,
@@ -2206,6 +2215,10 @@ d3d12_transfer_map(struct pipe_context *pctx,
 
          range.Begin = box->y * ptrans->stride +
             box->x * util_format_get_blocksize(pres->format);
+
+         /* The whole level is written back on unmap, so the parts outside
+          * the box must be read first. */
+         usage &= ~PIPE_MAP_DISCARD_RANGE;
       }
 
       unsigned staging_res_size = static_cast<unsigned>(ptrans->layer_stride * box->depth);
