@@ -4311,6 +4311,10 @@ dzn_cmd_buffer_indirect_draw(struct dzn_cmd_buffer *cmdbuf,
                              uint32_t draw_buf_stride,
                              bool indexed)
 {
+   /* Nothing to draw, and a zero-sized exec buffer fails to allocate */
+   if (max_draw_count == 0)
+      return;
+
    struct dzn_device *device = container_of(cmdbuf->vk.base.device, struct dzn_device, vk);
    struct dzn_physical_device *pdev = container_of(device->vk.physical, struct dzn_physical_device, vk);
    struct dzn_graphics_pipeline *pipeline = (struct dzn_graphics_pipeline *)
