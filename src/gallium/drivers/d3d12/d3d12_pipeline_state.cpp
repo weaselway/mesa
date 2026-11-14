@@ -486,7 +486,23 @@ create_gfx_pipeline_state(struct d3d12_context *ctx)
    D3D12_RASTERIZER_DESC& rast = (D3D12_RASTERIZER_DESC&)pso_desc.RasterizerState;
    rast = state->rast->desc;
 
-   if (reduced_prim != MESA_PRIM_TRIANGLES)
+   /* Culling applies to what reaches the rasterizer, which a user GS or the
+    * tessellator decides, not the draw mode. */
+   enum mesa_prim rast_prim = reduced_prim;
+   struct d3d12_shader_selector *gs = ctx->gfx_stages[MESA_SHADER_GEOMETRY];
+   if (gs && !gs->is_variant) {
+      rast_prim = u_reduced_prim((enum mesa_prim)gs->initial->info.gs.output_primitive);
+   } else if (state->stages[MESA_SHADER_TESS_EVAL]) {
+      const shader_info *tes = &state->stages[MESA_SHADER_TESS_EVAL]->nir->info;
+      if (tes->tess.point_mode)
+         rast_prim = MESA_PRIM_POINTS;
+      else if (tes->tess._primitive_mode == TESS_PRIMITIVE_ISOLINES)
+         rast_prim = MESA_PRIM_LINES;
+      else
+         rast_prim = MESA_PRIM_TRIANGLES;
+   }
+
+   if (rast_prim != MESA_PRIM_TRIANGLES)
       rast.CullMode = D3D12_CULL_MODE_NONE;
 
    if (depth_bias(state->rast, reduced_prim)) {
