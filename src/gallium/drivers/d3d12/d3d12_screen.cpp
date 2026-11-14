@@ -1797,6 +1797,7 @@ d3d12_init_screen(struct d3d12_screen *screen, IUnknown *adapter)
       return false;
    }
    screen->dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS12, &screen->opts12, sizeof(screen->opts12));
+   screen->dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS13, &screen->opts13, sizeof(screen->opts13));
    screen->dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS14, &screen->opts14, sizeof(screen->opts14));
 #ifndef _GAMING_XBOX
    screen->dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS19, &screen->opts19, sizeof(screen->opts19));
