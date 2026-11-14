@@ -1826,17 +1826,6 @@ prepare_zs_layer_strides(struct d3d12_screen *screen,
    trans->base.b.layer_stride = static_cast<uintptr_t>(util_format_get_2d_size(res->base.b.format,
                                                                                trans->base.b.stride,
                                                                                height));
-
-   if (copy_whole_resource) {
-      trans->zs_cpu_copy_stride = align(util_format_get_stride(res->base.b.format, box->width),
-                                        D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
-      trans->zs_cpu_copy_layer_stride = static_cast<unsigned int>(util_format_get_2d_size(res->base.b.format,
-                                                                                          trans->base.b.stride,
-                                                                                          box->height));
-   } else {
-      trans->zs_cpu_copy_stride = trans->base.b.stride;
-      trans->zs_cpu_copy_layer_stride = static_cast<unsigned int>(trans->base.b.layer_stride);
-   }
 }
 
 static void *
@@ -1895,7 +1884,7 @@ read_zs_surface(struct d3d12_context *ctx, struct d3d12_resource *res,
       return NULL;
    }
 
-   uint8_t *buf = (uint8_t *)malloc(trans->zs_cpu_copy_layer_stride);
+   uint8_t *buf = (uint8_t *)malloc(trans->base.b.layer_stride);
    if (!buf)
       return NULL;
 
@@ -1907,7 +1896,7 @@ read_zs_surface(struct d3d12_context *ctx, struct d3d12_resource *res,
          depth_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x * 4;
          stencil_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x;
       }
-      util_format_z24_unorm_s8_uint_pack_separate(buf, trans->zs_cpu_copy_stride,
+      util_format_z24_unorm_s8_uint_pack_separate(buf, trans->base.b.stride,
                                                   (uint32_t *)depth_ptr, trans->base.b.stride,
                                                   stencil_ptr, trans->base.b.stride,
                                                   trans->base.b.box.width, trans->base.b.box.height);
@@ -1917,10 +1906,10 @@ read_zs_surface(struct d3d12_context *ctx, struct d3d12_resource *res,
          depth_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x * 4;
          stencil_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x;
       }
-      util_format_z32_float_s8x24_uint_pack_z_float(buf, trans->zs_cpu_copy_stride,
+      util_format_z32_float_s8x24_uint_pack_z_float(buf, trans->base.b.stride,
                                                     (float *)depth_ptr, trans->base.b.stride,
                                                     trans->base.b.box.width, trans->base.b.box.height);
-      util_format_z32_float_s8x24_uint_pack_s_8uint(buf, trans->zs_cpu_copy_stride,
+      util_format_z32_float_s8x24_uint_pack_s_8uint(buf, trans->base.b.stride,
                                                     stencil_ptr, trans->base.b.stride,
                                                     trans->base.b.box.width, trans->base.b.box.height);
       break;
@@ -2003,10 +1992,10 @@ write_zs_surface(struct pipe_context *pctx, struct d3d12_resource *res,
          stencil_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x;
       }
       util_format_z32_unorm_unpack_z_32unorm((uint32_t *)depth_ptr, trans->base.b.stride, (uint8_t*)trans->data,
-                                             trans->zs_cpu_copy_stride, trans->base.b.box.width,
+                                             trans->base.b.stride, trans->base.b.box.width,
                                              trans->base.b.box.height);
       util_format_z24_unorm_s8_uint_unpack_s_8uint(stencil_ptr, trans->base.b.stride, (uint8_t*)trans->data,
-                                                   trans->zs_cpu_copy_stride, trans->base.b.box.width,
+                                                   trans->base.b.stride, trans->base.b.box.width,
                                                    trans->base.b.box.height);
       break;
    case PIPE_FORMAT_Z32_FLOAT_S8X24_UINT:
@@ -2015,10 +2004,10 @@ write_zs_surface(struct pipe_context *pctx, struct d3d12_resource *res,
          stencil_ptr += trans->base.b.box.y * trans->base.b.stride + trans->base.b.box.x;
       }
       util_format_z32_float_s8x24_uint_unpack_z_float((float *)depth_ptr, trans->base.b.stride, (uint8_t*)trans->data,
-                                                      trans->zs_cpu_copy_stride, trans->base.b.box.width,
+                                                      trans->base.b.stride, trans->base.b.box.width,
                                                       trans->base.b.box.height);
       util_format_z32_float_s8x24_uint_unpack_s_8uint(stencil_ptr, trans->base.b.stride, (uint8_t*)trans->data,
-                                                      trans->zs_cpu_copy_stride, trans->base.b.box.width,
+                                                      trans->base.b.stride, trans->base.b.box.width,
                                                       trans->base.b.box.height);
       break;
    default:
@@ -2178,9 +2167,6 @@ d3d12_transfer_map(struct pipe_context *pctx,
 
       if (util_format_has_depth(util_format_description(pres->format)) &&
           screen->opts2.ProgrammableSamplePositionsTier == D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED) {
-         trans->zs_cpu_copy_stride = ptrans->stride;
-         trans->zs_cpu_copy_layer_stride = static_cast<unsigned int>(ptrans->layer_stride);
-         
          ptrans->stride = align(util_format_get_stride(pres->format, u_minify(pres->width0, level)),
                                 D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
          ptrans->layer_stride = static_cast<uintptr_t>(util_format_get_2d_size(pres->format,
