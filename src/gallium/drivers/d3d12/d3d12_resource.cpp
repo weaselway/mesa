@@ -1468,9 +1468,9 @@ fill_buffer_location(struct d3d12_context *ctx,
 
    if (util_format_has_depth(util_format_description(res->base.b.format)) &&
        screen->opts2.ProgrammableSamplePositionsTier == D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED) {
-      buf_loc.PlacedFootprint.Footprint.Width = res->base.b.width0;
-      buf_loc.PlacedFootprint.Footprint.Height = res->base.b.height0;
-      buf_loc.PlacedFootprint.Footprint.Depth = res->base.b.depth0;
+      buf_loc.PlacedFootprint.Footprint.Width = u_minify(res->base.b.width0, trans->base.b.level);
+      buf_loc.PlacedFootprint.Footprint.Height = u_minify(res->base.b.height0, trans->base.b.level);
+      buf_loc.PlacedFootprint.Footprint.Depth = u_minify(res->base.b.depth0, trans->base.b.level);
    } else {
       buf_loc.PlacedFootprint.Footprint.Width = align(trans->base.b.box.width,
                                                       util_format_get_blockwidth(res->base.b.format));
@@ -1818,8 +1818,8 @@ prepare_zs_layer_strides(struct d3d12_screen *screen,
                          struct d3d12_transfer *trans)
 {
    bool copy_whole_resource = screen->opts2.ProgrammableSamplePositionsTier == D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED;
-   int width = copy_whole_resource ? res->base.b.width0 : box->width;
-   int height = copy_whole_resource ? res->base.b.height0 : box->height;
+   int width = copy_whole_resource ? u_minify(res->base.b.width0, trans->base.b.level) : box->width;
+   int height = copy_whole_resource ? u_minify(res->base.b.height0, trans->base.b.level) : box->height;
 
    trans->base.b.stride = align(util_format_get_stride(res->base.b.format, width),
                                 D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
@@ -2172,11 +2172,12 @@ d3d12_transfer_map(struct pipe_context *pctx,
          trans->zs_cpu_copy_stride = ptrans->stride;
          trans->zs_cpu_copy_layer_stride = static_cast<unsigned int>(ptrans->layer_stride);
          
-         ptrans->stride = align(util_format_get_stride(pres->format, pres->width0),
+         ptrans->stride = align(util_format_get_stride(pres->format, u_minify(pres->width0, level)),
                                 D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
          ptrans->layer_stride = static_cast<uintptr_t>(util_format_get_2d_size(pres->format,
                                                                                ptrans->stride,
-                                                                               pres->height0));
+                                                                               u_minify(pres->height0, level)));
+         ptrans->layer_stride = align(ptrans->layer_stride, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
 
          range.Begin = box->y * ptrans->stride +
             box->x * util_format_get_blocksize(pres->format);
