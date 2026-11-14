@@ -228,7 +228,13 @@ direct_copy_supported(struct d3d12_screen *screen,
 
       if (info->dst.box.x != 0 ||
           info->dst.box.y != 0 ||
-          info->dst.box.z != 0)
+          info->dst.box.z != 0 ||
+          info->dst.box.width != (int)u_minify(info->dst.resource->width0,
+                                               info->dst.level) ||
+          info->dst.box.height != (int)u_minify(info->dst.resource->height0,
+                                                info->dst.level) ||
+          info->dst.box.depth != (int)u_minify(info->dst.resource->depth0,
+                                               info->dst.level))
          return false;
 
       if (info->src.box.x != 0 ||
