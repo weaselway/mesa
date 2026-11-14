@@ -314,6 +314,56 @@ util_blit(struct d3d12_context *ctx,
    util_blitter_blit(ctx->blitter, info, NULL);
 }
 
+/* RGB9E5 isn't renderable, so the texture has no RTV, but glCopyImageSubData
+ * blits into it through a R8G8B8A8_UINT view. Blit into an R32_UINT texture
+ * instead and copy that over; R32_UINT -> RGB9E5 is a valid reinterpret copy. */
+static bool
+blit_to_rgb9e5_supported(struct d3d12_context *ctx,
+                         const struct pipe_blit_info *info)
+{
+   return info->dst.resource->format == PIPE_FORMAT_R9G9B9E5_FLOAT &&
+          info->dst.format != PIPE_FORMAT_R9G9B9E5_FLOAT &&
+          info->dst.resource->nr_samples <= 1 &&
+          d3d12_screen(ctx->base.screen)->opts12.RelaxedFormatCastingSupported;
+}
+
+static void
+blit_to_rgb9e5(struct d3d12_context *ctx,
+               const struct pipe_blit_info *info)
+{
+   const struct pipe_box *dbox = &info->dst.box;
+   bool is_3d = info->dst.resource->target == PIPE_TEXTURE_3D;
+   struct pipe_resource templ = {};
+   templ.target = is_3d ? PIPE_TEXTURE_3D : PIPE_TEXTURE_2D_ARRAY;
+   templ.format = PIPE_FORMAT_R32_UINT;
+   templ.width0 = dbox->width;
+   templ.height0 = dbox->height;
+   templ.depth0 = is_3d ? dbox->depth : 1;
+   templ.array_size = is_3d ? 1 : dbox->depth;
+   templ.usage = PIPE_USAGE_DEFAULT;
+   templ.bind = PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
+
+   struct pipe_resource *tmp = ctx->base.screen->resource_create(ctx->base.screen, &templ);
+   if (!tmp) {
+      mesa_loge("d3d12: failed to allocate RGB9E5 blit staging");
+      return;
+   }
+
+   struct pipe_blit_info tmp_info = *info;
+   tmp_info.dst.resource = tmp;
+   tmp_info.dst.level = 0;
+   u_box_3d(0, 0, 0, dbox->width, dbox->height, dbox->depth, &tmp_info.dst.box);
+   util_blit(ctx, &tmp_info);
+
+   for (int i = 0; i < dbox->depth; i++) {
+      struct pipe_box layer;
+      u_box_3d(0, 0, i, dbox->width, dbox->height, 1, &layer);
+      ctx->base.resource_copy_region(&ctx->base, info->dst.resource, info->dst.level,
+                                     dbox->x, dbox->y, dbox->z + i, tmp, 0, &layer);
+   }
+   pipe_resource_reference(&tmp, NULL);
+}
+
 static bool
 resolve_stencil_supported(struct d3d12_context *ctx,
                           const struct pipe_blit_info *info)
@@ -703,6 +753,8 @@ d3d12_blit(struct pipe_context *pctx,
                         info->dst.level, &info->dst.box,
                         d3d12_resource(info->src.resource),
                         info->src.level, &info->src.box, info->mask);
+   else if (blit_to_rgb9e5_supported(ctx, info))
+      blit_to_rgb9e5(ctx, info);
    else if (util_blitter_is_blit_supported(ctx->blitter, info))
       util_blit(ctx, info);
    else if (replicate_stencil_supported(ctx, info))
