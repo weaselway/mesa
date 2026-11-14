@@ -95,7 +95,8 @@ get_indirect_draw_base_vertex_transform(const nir_shader_compiler_options *optio
 
    nir_validate_shader(b.shader, "creation");
    b.shader->info.num_ssbos = 2;
-   b.shader->info.num_ubos = (args->base_vertex.dynamic_count ? 1 : 0);
+   /* The count UBO is bound at slot 1; this keeps the state vars UBO off that binding */
+   b.shader->info.num_ubos = (args->base_vertex.dynamic_count ? 2 : 0);
 
    return b.shader;
 }
