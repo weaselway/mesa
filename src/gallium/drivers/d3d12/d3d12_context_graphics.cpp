@@ -665,7 +665,9 @@ d3d12_create_sampler_state(struct pipe_context *pctx,
 
    if (state->compare_mode == PIPE_TEX_COMPARE_R_TO_TEXTURE) {
       desc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-      desc.Filter = D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT;
+      /* The lowered shader does a plain Sample and compares itself, so this
+       * must not be a comparison sampler. */
+      desc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
 
       d3d12_descriptor_pool_alloc_handle(ctx->sampler_pool,
                                          &ss->handle_without_shadow);
