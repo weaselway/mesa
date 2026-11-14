@@ -1093,12 +1093,15 @@ d3d12_draw_vbo(struct pipe_context *pctx,
 
    if (ctx->cmdlist_dirty & D3D12_DIRTY_BLEND_COLOR) {
       unsigned blend_factor_flags = ctx->gfx_pipeline_state.blend->blend_factor_flags;
-      if (blend_factor_flags & (D3D12_BLEND_FACTOR_COLOR | D3D12_BLEND_FACTOR_ANY)) {
-         ctx->cmdlist->OMSetBlendFactor(ctx->blend_factor);
-      } else if (blend_factor_flags & D3D12_BLEND_FACTOR_ALPHA) {
+      /* The alpha channel only reads .a, which the splat keeps, so ANY
+       * must not override constant alpha in the color channels. */
+      if ((blend_factor_flags & D3D12_BLEND_FACTOR_ALPHA) &&
+          !(blend_factor_flags & D3D12_BLEND_FACTOR_COLOR)) {
          float alpha_const[4] = { ctx->blend_factor[3], ctx->blend_factor[3],
                                  ctx->blend_factor[3], ctx->blend_factor[3] };
          ctx->cmdlist->OMSetBlendFactor(alpha_const);
+      } else if (blend_factor_flags) {
+         ctx->cmdlist->OMSetBlendFactor(ctx->blend_factor);
       }
    }
 
