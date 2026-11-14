@@ -679,6 +679,24 @@ lower_triangle_strip_end_primitive(nir_builder *b, nir_intrinsic_instr *intr,
    return true;
 }
 
+/* D3D12 allows at most 1024 output scalars per GS invocation. Exceeding it is
+ * not caught without the DXIL validator and faults the GPU.
+ * shortcut: vertices past the clamp are dropped; splitting the GS into
+ * instances would keep them. */
+void
+d3d12_clamp_gs_vertices_out(nir_shader *shader)
+{
+   unsigned out_comps = 0;
+   nir_foreach_variable_with_modes(var, shader, nir_var_shader_out) {
+      /* D3D12 has no point size output */
+      if (var->data.location != VARYING_SLOT_PSIZ)
+         out_comps += glsl_get_component_slots(var->type);
+   }
+   shader->info.gs.vertices_out = MIN2(shader->info.gs.vertices_out,
+                                       D3D12_REQ_GS_INVOCATION_32BIT_OUTPUT_COMPONENT_LIMIT /
+                                          MAX2(out_comps, 1));
+}
+
 bool
 d3d12_lower_triangle_strip(nir_shader *shader)
 {
@@ -731,6 +749,7 @@ d3d12_lower_triangle_strip(nir_shader *shader)
    _mesa_hash_table_destroy(tmp_vars, NULL);
    nir_progress(progress, impl, nir_metadata_none);
    NIR_PASS(progress, shader, nir_lower_var_copies);
+   d3d12_clamp_gs_vertices_out(shader);
    return progress;
 }
 
