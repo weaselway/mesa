@@ -91,6 +91,9 @@ d3d12_nir_invert_depth(nir_shader *s, unsigned viewport_mask, bool clip_halfz);
 bool
 d3d12_lower_primitive_id(nir_shader *shader);
 
+void
+d3d12_clamp_gs_vertices_out(nir_shader *shader);
+
 bool
 d3d12_lower_triangle_strip(nir_shader *shader);
 
