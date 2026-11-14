@@ -821,6 +821,11 @@ d3d12_init_sampler_view_descriptor(struct d3d12_sampler_view *sampler_view)
       component_mapping((pipe_swizzle)sampler_view->swizzle_override_a)
    );
 
+   if (d3d12_is_stencil_view(state)) {
+      D3D12_SHADER_COMPONENT_MAPPING s = component_mapping(format_info.swizzle[PIPE_SWIZZLE_X]);
+      desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(s, s, s, s);
+   }
+
    uint64_t offset = 0;
    ID3D12Resource *d3d12_res = d3d12_resource_underlying(res, &offset);
    assert(offset == 0 || res->base.b.target == PIPE_BUFFER);
@@ -1021,10 +1026,15 @@ d3d12_set_sampler_views(struct pipe_context *pctx,
           * intensity, or alpha. and we need the swizzle state for applying the
           * boundary color correctly */
          struct d3d12_sampler_view *ss = d3d12_sampler_view(views[i]);
-         swizzle_state.swizzle_r = ss->swizzle_override_r;
-         swizzle_state.swizzle_g = ss->swizzle_override_g;
-         swizzle_state.swizzle_b = ss->swizzle_override_b;
-         swizzle_state.swizzle_a = ss->swizzle_override_a;
+         if (d3d12_is_stencil_view(views[i])) {
+            /* The shader swizzles stencil views, so replicate the border color like the fetch */
+            swizzle_state = { PIPE_SWIZZLE_X, PIPE_SWIZZLE_X, PIPE_SWIZZLE_X, PIPE_SWIZZLE_X };
+         } else {
+            swizzle_state.swizzle_r = ss->swizzle_override_r;
+            swizzle_state.swizzle_g = ss->swizzle_override_g;
+            swizzle_state.swizzle_b = ss->swizzle_override_b;
+            swizzle_state.swizzle_a = ss->swizzle_override_a;
+         }
       }
    }
 

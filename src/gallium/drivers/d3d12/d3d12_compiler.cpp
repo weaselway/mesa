@@ -770,7 +770,11 @@ d3d12_compare_shader_keys(struct d3d12_selection_context* sel_ctx, const d3d12_s
          expect->common_all == have->common_all &&
          expect->tex_saturate_s == have->tex_saturate_s &&
          expect->tex_saturate_r == have->tex_saturate_r &&
-         expect->tex_saturate_t == have->tex_saturate_t))
+         expect->tex_saturate_t == have->tex_saturate_t &&
+         expect->stencil_view_mask == have->stencil_view_mask))
+      return false;
+
+   if (memcmp(expect->stencil_swizzles, have->stencil_swizzles, sizeof(expect->stencil_swizzles)))
       return false;
 
    if (expect->next_has_frac_inputs &&
@@ -794,6 +798,7 @@ d3d12_shader_key_hash(const d3d12_shader_key *key)
    hash += static_cast<uint32_t>(key->next_varying_inputs);
    hash += static_cast<uint32_t>(key->prev_varying_outputs);
    hash += key->common_all;
+   hash += key->stencil_view_mask;
    if (key->next_has_frac_inputs)
       hash = _mesa_hash_data_with_seed(key->next_varying_frac_inputs, sizeof(d3d12_shader_selector::varying_frac_inputs), hash);
    if (key->prev_has_frac_outputs)
@@ -1034,6 +1039,20 @@ d3d12_fill_shader_key(struct d3d12_selection_context *sel_ctx,
       memcpy(key->cs.workgroup_size, sel_ctx->variable_workgroup_size, sizeof(key->cs.workgroup_size));
    }
 
+   /* shortcut: stencil views in slots >= 32 keep the replicated value, upgrade if
+    * nir_lower_tex ever supports more swizzled textures. */
+   for (unsigned i = 0; i < MIN2(sel_ctx->ctx->num_sampler_views[stage], PIPE_MAX_SAMPLERS); ++i) {
+      struct pipe_sampler_view *view = sel_ctx->ctx->sampler_views[stage][i];
+      if (!view || !d3d12_is_stencil_view(view))
+         continue;
+      struct d3d12_sampler_view *sv = d3d12_sampler_view(view);
+      key->stencil_view_mask |= 1u << i;
+      key->stencil_swizzles[i][0] = sv->swizzle_override_r;
+      key->stencil_swizzles[i][1] = sv->swizzle_override_g;
+      key->stencil_swizzles[i][2] = sv->swizzle_override_b;
+      key->stencil_swizzles[i][3] = sv->swizzle_override_a;
+   }
+
    key->n_images = sel_ctx->ctx->num_image_views[stage];
    for (unsigned i = 0; i < key->n_images; ++i) {
       key->image_format_conversion[i].emulated_format = sel_ctx->ctx->image_view_emulation_formats[stage][i];
@@ -1154,6 +1173,9 @@ select_shader_variant(struct d3d12_selection_context *sel_ctx, d3d12_shader_sele
       tex_options.saturate_t = key.tex_saturate_t;
       tex_options.lower_invalid_implicit_lod = true;
       tex_options.lower_tg4_offsets = true;
+      tex_options.swizzle_result = key.stencil_view_mask;
+      STATIC_ASSERT(sizeof(tex_options.swizzles) == sizeof(key.stencil_swizzles));
+      memcpy(tex_options.swizzles, key.stencil_swizzles, sizeof(key.stencil_swizzles));
 
       NIR_PASS(_, new_nir_variant, nir_lower_tex, &tex_options);
    }
