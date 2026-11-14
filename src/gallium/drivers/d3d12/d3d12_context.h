@@ -140,6 +140,16 @@ d3d12_sampler_view(struct pipe_sampler_view *pview)
    return (struct d3d12_sampler_view *)pview;
 }
 
+/* NVIDIA ignores the SRV component mapping of stencil views and returns the
+ * stencil value in all channels. So stencil views always replicate the
+ * stencil value and the shader applies the view swizzle. */
+static inline bool
+d3d12_is_stencil_view(const struct pipe_sampler_view *view)
+{
+   const struct util_format_description *desc = util_format_description(view->format);
+   return util_format_has_stencil(desc) && !util_format_has_depth(desc);
+}
+
 struct d3d12_stream_output_target {
    struct pipe_stream_output_target base;
    struct pipe_resource *fill_buffer;
