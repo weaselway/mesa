@@ -71,7 +71,8 @@ from_10_10_10_2_snorm(nir_builder *b, nir_def *src, nir_def *lshift)
                                          1.0f / 0x1ff,
                                          1.0f / 0x1ff,
                                          1.0f);
-   return nir_fmul(b, split, scale_rgb);
+   /* the most negative value (e.g. -2 for the 2-bit alpha) maps to -1 */
+   return nir_fmax(b, nir_fmul(b, split, scale_rgb), nir_imm_float(b, -1.0f));
 }
 
 static nir_def *
