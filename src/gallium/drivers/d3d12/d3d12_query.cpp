@@ -398,6 +398,9 @@ accumulate_subresult_gpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
    grid.grid[0] = grid.grid[1] = grid.grid[2] = 1;
    ctx->base.launch_grid(&ctx->base, &grid);
 
+   /* The accumulated result is in the first slot. Reset before the restore,
+    * which resumes queries and can begin this subquery again. */
+   q_parent->subqueries[sub_query].curr_query = 1;
    d3d12_restore_compute_transform_state(ctx, &save);
 }
 
@@ -453,10 +456,15 @@ static void
 begin_subquery(struct d3d12_context *ctx, struct d3d12_query *q_parent, unsigned sub_query)
 {
    struct d3d12_query_impl *q = &q_parent->subqueries[sub_query];
+   /* Already begun by the query resume nested in accumulate_subresult_gpu */
+   if (q->active)
+      return;
+
    if (q->curr_query == q->num_queries) {
       /* Accumulate current results and store in first slot */
       accumulate_subresult_gpu(ctx, q_parent, sub_query);
-      q->curr_query = 1;
+      if (q->active)
+         return;
    }
 
    ctx->cmdlist->BeginQuery(q->query_heap, q->d3d12qtype, q->curr_query);
