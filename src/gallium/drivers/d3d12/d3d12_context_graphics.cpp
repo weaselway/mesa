@@ -1924,7 +1924,6 @@ d3d12_disable_fake_so_buffers(struct d3d12_context *ctx)
       ctx->base.launch_grid(&ctx->base, &grid);
 
       pipe_so_target_reference(&ctx->fake_so_targets[i], NULL);
-      ctx->fake_so_buffer_views[i].SizeInBytes = 0;
 
       /* Make sure the buffer is not copied twice */
       for (unsigned j = i + 1; j < ctx->gfx_pipeline_state.num_so_targets; ++j) {
@@ -1933,6 +1932,9 @@ d3d12_disable_fake_so_buffers(struct d3d12_context *ctx)
       }
    }
 
+   /* All four views are bound on draw: stale addresses in slots a later
+    * fake draw does not use point at freed buffers and fault the GPU. */
+   memset(ctx->fake_so_buffer_views, 0, sizeof(ctx->fake_so_buffer_views));
    ctx->fake_so_buffer_factor = 0;
    ctx->cmdlist_dirty |= D3D12_DIRTY_STREAM_OUTPUT;
 
