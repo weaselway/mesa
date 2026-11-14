@@ -48,10 +48,17 @@ resolve_supported(const struct pipe_blit_info *info)
 {
    assert(is_resolve(info));
 
+   struct d3d12_screen *screen = d3d12_screen(info->src.resource->screen);
+
    // check for unsupported operations
    if (util_format_is_depth_or_stencil(info->src.format) &&
        info->mask != PIPE_MASK_Z) {
       return false;
+   } else if (util_format_is_depth_or_stencil(info->src.format)) {
+      /* Resolving depth needs programmable sample positions tier 1 */
+      if (screen->opts2.ProgrammableSamplePositionsTier ==
+          D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED)
+         return false;
    } else {
       if (util_format_get_mask(info->dst.format) != info->mask ||
           util_format_get_mask(info->src.format) != info->mask ||
@@ -309,6 +316,16 @@ resolve_stencil_supported(struct d3d12_context *ctx,
 
    if (!util_format_is_depth_or_stencil(info->src.format) ||
        !(info->mask & PIPE_MASK_S))
+      return false;
+
+   /* The resolved stencil is copied into the stencil plane, and without
+    * programmable sample positions depth-stencil copies must cover the
+    * whole subresource. A partial copy removes the device. */
+   if (d3d12_screen(ctx->base.screen)->opts2.ProgrammableSamplePositionsTier ==
+          D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED &&
+       (info->dst.box.x != 0 || info->dst.box.y != 0 ||
+        info->dst.box.width != (int)u_minify(info->dst.resource->width0, info->dst.level) ||
+        info->dst.box.height != (int)u_minify(info->dst.resource->height0, info->dst.level)))
       return false;
 
    if (info->mask & PIPE_MASK_Z) {
