@@ -765,6 +765,35 @@ dzn_graphics_pipeline_hash_attribs(D3D12_INPUT_ELEMENT_DESC *attribs,
    _mesa_blake3_final(&ctx, result);
 }
 
+/* Culling only applies to polygons, FRONT_AND_BACK still draws points and lines. */
+static bool
+dzn_graphics_pipeline_culls_everything(const VkGraphicsPipelineCreateInfo *info)
+{
+   if (!info->pRasterizationState ||
+       info->pRasterizationState->cullMode != VK_CULL_MODE_FRONT_AND_BACK)
+      return false;
+
+   /* shortcut: the output primitive of geometry and tessellation shaders is
+    * not checked, upgrade when a test or app draws points or lines with them.
+    */
+   for (uint32_t i = 0; i < info->stageCount; i++) {
+      if (info->pStages[i].stage & (VK_SHADER_STAGE_GEOMETRY_BIT |
+                                    VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT))
+         return true;
+   }
+
+   switch (info->pInputAssemblyState->topology) {
+   case VK_PRIMITIVE_TOPOLOGY_POINT_LIST:
+   case VK_PRIMITIVE_TOPOLOGY_LINE_LIST:
+   case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP:
+   case VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY:
+   case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY:
+      return false;
+   default:
+      return true;
+   }
+}
+
 static VkResult
 dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
                                       struct dzn_graphics_pipeline *pipeline,
@@ -813,7 +842,7 @@ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
       if (stage == MESA_SHADER_FRAGMENT &&
           info->pRasterizationState &&
           (info->pRasterizationState->rasterizerDiscardEnable ||
-           info->pRasterizationState->cullMode == VK_CULL_MODE_FRONT_AND_BACK)) {
+           dzn_graphics_pipeline_culls_everything(info))) {
          /* Disable rasterization (AKA leave fragment shader NULL) when
           * front+back culling or discard is set.
           */
@@ -1566,7 +1595,7 @@ dzn_graphics_pipeline_translate_zsa(struct dzn_device *device,
    const VkPipelineRenderingCreateInfo *ri = vk_find_struct_const(in, PIPELINE_RENDERING_CREATE_INFO);
 
    if (!in_zsa ||
-       in_rast->cullMode == VK_CULL_MODE_FRONT_AND_BACK) {
+       dzn_graphics_pipeline_culls_everything(in)) {
       /* Ensure depth is disabled if the rasterizer should be disabled / everything culled */
       if (pdev->options14.IndependentFrontAndBackStencilRefMaskSupported) {
          d3d12_gfx_pipeline_state_stream_new_desc(out, DEPTH_STENCIL2, D3D12_DEPTH_STENCIL_DESC2, stream_desc);
