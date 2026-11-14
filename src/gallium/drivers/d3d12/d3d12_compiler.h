@@ -119,6 +119,9 @@ struct d3d12_shader_key {
    unsigned tex_saturate_s : PIPE_MAX_SAMPLERS;
    unsigned tex_saturate_r : PIPE_MAX_SAMPLERS;
    unsigned tex_saturate_t : PIPE_MAX_SAMPLERS;
+   /* View swizzles applied in the shader, see d3d12_is_stencil_view() */
+   uint32_t stencil_view_mask;
+   uint8_t stencil_swizzles[PIPE_MAX_SAMPLERS][4];
    union {
       struct {
          unsigned needs_format_emulation:1;
