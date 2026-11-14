@@ -1592,6 +1592,7 @@ d3d12_set_stream_output_targets(struct pipe_context *pctx,
 
    d3d12_disable_fake_so_buffers(ctx);
 
+   bool resume = false;
    for (unsigned i = 0; i < PIPE_MAX_SO_BUFFERS; i++) {
       struct d3d12_stream_output_target *target =
          i < num_targets ? (struct d3d12_stream_output_target *)targets[i] : NULL;
@@ -1602,6 +1603,8 @@ d3d12_set_stream_output_targets(struct pipe_context *pctx,
             u_suballocator_alloc(&ctx->so_allocator, sizeof(uint32_t) * 5, 16,
                                  &target->fill_buffer_offset, &target->fill_buffer);
             update_so_fill_buffer_count(ctx, target->fill_buffer, target->fill_buffer_offset, offsets[i]);
+         } else if (target->fill_buffer) {
+            resume = true;
          }
          fill_stream_output_buffer_view(&ctx->so_buffer_views[i], target);
          pipe_so_target_reference(&ctx->so_targets[i], targets[i]);
@@ -1611,6 +1614,14 @@ d3d12_set_stream_output_targets(struct pipe_context *pctx,
          ctx->so_buffer_views[i].SizeInBytes = 0;
          pipe_so_target_reference(&ctx->so_targets[i], NULL);
       }
+   }
+
+   /* Appending (resume): NVIDIA reloads stale filled sizes unless the
+    * counters written on unbind are flushed. Transitioning the fill buffers
+    * is not enough once they live in different resources; a full barrier is. */
+   if (resume) {
+      D3D12_RESOURCE_BARRIER barrier = { D3D12_RESOURCE_BARRIER_TYPE_ALIASING };
+      ctx->cmdlist->ResourceBarrier(1, &barrier);
    }
 
    ctx->gfx_pipeline_state.num_so_targets = num_targets;
