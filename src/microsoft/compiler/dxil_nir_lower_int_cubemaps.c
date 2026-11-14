@@ -87,7 +87,7 @@ lower_int_cubmap_to_array_filter(const nir_instr *instr,
       assert(sampler_deref >= 0);
       nir_deref_instr *deref = nir_def_as_deref(tex->src[sampler_deref].src.ssa);
       nir_variable *cube = nir_deref_instr_get_variable(deref);
-      return glsl_base_type_is_integer(glsl_get_sampler_result_type(cube->type));
+      return glsl_base_type_is_integer(glsl_get_sampler_result_type(glsl_without_array(cube->type)));
    }
 
    return false;
