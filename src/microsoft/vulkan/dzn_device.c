@@ -132,6 +132,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .KHR_dynamic_rendering                 = true,
       .KHR_external_memory                   = true,
       .KHR_external_semaphore                = true,
+      .KHR_format_feature_flags2             = true,
 #ifdef _WIN32
       .KHR_external_memory_win32             = true,
       .KHR_external_semaphore_win32          = true,
@@ -1419,10 +1420,6 @@ dzn_physical_device_get_format_properties(struct dzn_physical_device *pdev,
       dzn_physical_device_get_format_support(pdev, format, 0);
    VkFormatProperties *base_props = &properties->formatProperties;
 
-   vk_foreach_struct(sType, ext, properties->pNext) {
-      vk_debug_ignored_stype(sType);
-   }
-
    if (dfmt_info.Format == DXGI_FORMAT_UNKNOWN) {
       if (dzn_graphics_pipeline_patch_vi_format(format) != format)
          *base_props = (VkFormatProperties){
@@ -1767,6 +1764,44 @@ dzn_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
    VK_FROM_HANDLE(dzn_physical_device, pdev, physicalDevice);
 
    dzn_physical_device_get_format_properties(pdev, format, pFormatProperties);
+
+   const VkFormatProperties *base_props = &pFormatProperties->formatProperties;
+   vk_foreach_struct(sType, ext, pFormatProperties->pNext) {
+      switch (sType) {
+      case VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3: {
+         VkFormatProperties3 *props3 = (VkFormatProperties3 *)ext;
+         props3->linearTilingFeatures = base_props->linearTilingFeatures;
+         props3->optimalTilingFeatures = base_props->optimalTilingFeatures;
+         props3->bufferFeatures = base_props->bufferFeatures;
+
+         /* DXIL takes the storage format from the UAV descriptor, never
+          * from the shader. Reads still need typed UAV load support. Intel
+          * HD 630 reports no per-format UAV_TYPED_LOAD for the optional
+          * additional formats, but loads from them pass the CTS, so trust
+          * the device-wide cap. */
+         D3D12_FEATURE_DATA_FORMAT_SUPPORT dfmt_info =
+            dzn_physical_device_get_format_support(pdev, format, 0);
+         VkFormatFeatureFlags2 without_format =
+            VK_FORMAT_FEATURE_2_STORAGE_WRITE_WITHOUT_FORMAT_BIT;
+         if (pdev->options.TypedUAVLoadAdditionalFormats ||
+             (dfmt_info.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD))
+            without_format |= VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT;
+         if (props3->optimalTilingFeatures & VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT)
+            props3->optimalTilingFeatures |= without_format;
+         if (props3->bufferFeatures & VK_FORMAT_FEATURE_2_STORAGE_TEXEL_BUFFER_BIT)
+            props3->bufferFeatures |= without_format;
+
+         /* D3D12 supports comparison sampling on every depth SRV format. */
+         if (vk_format_has_depth(format) &&
+             (props3->optimalTilingFeatures & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT))
+            props3->optimalTilingFeatures |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT;
+         break;
+      }
+      default:
+         vk_debug_ignored_stype(sType);
+         break;
+      }
+   }
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
