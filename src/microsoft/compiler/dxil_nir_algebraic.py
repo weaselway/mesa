@@ -106,6 +106,14 @@ for sz in (32, 64):
       ('ior', ('f2i64', ('fadd', a, -9223372036854775808.0)), -0x8000000000000000))),
   ]
 
+# fcanonicalize otherwise becomes fmul(a, 1.0), which drivers fold away
+# without flushing denorms, so flush explicitly.
+algebraic_ops += [
+  (('fcanonicalize', 'a@32'),
+   ('bcsel', ('flt', ('fabs', a), 1.1754943508222875e-38), ('iand', a, 0x80000000), a),
+   'nir_is_denorm_flush_to_zero(info->float_controls_execution_mode, 32)'),
+]
+
 no_16bit_conv += [
   (('f2f32', ('u2u16', 'a@32')), ('unpack_half_x_dxil', a)),
   (('u2u32', ('f2f16_rtz', 'a@32')), ('pack_half_2x16_split', 'a', 0)),
