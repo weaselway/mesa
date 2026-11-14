@@ -1580,7 +1580,7 @@ dzn_graphics_pipeline_translate_zsa(struct dzn_device *device,
       in->pRasterizationState;
    const VkPipelineDepthStencilStateCreateInfo *in_zsa =
       in_rast->rasterizerDiscardEnable ? NULL : in->pDepthStencilState;
-   const VkPipelineRenderingCreateInfo *ri = vk_find_struct_const(in, PIPELINE_RENDERING_CREATE_INFO);
+   const VkPipelineRenderingCreateInfo *ri = vk_get_pipeline_rendering_create_info(in);
 
    if (!in_zsa ||
        dzn_graphics_pipeline_culls_everything(in)) {
