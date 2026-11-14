@@ -2044,6 +2044,11 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
       view_mask = ri->viewMask;
    }
 
+   /* Trailing unused attachments as UNKNOWN render targets make NVIDIA ignore
+    * the PSO sample count when nothing else is bound. */
+   while (color_count > 0 && color_fmts[color_count - 1] == VK_FORMAT_UNDEFINED)
+      color_count--;
+
    if (color_count > 0) {
       d3d12_gfx_pipeline_state_stream_new_desc(stream_desc, RENDER_TARGET_FORMATS, struct D3D12_RT_FORMAT_ARRAY, rts);
       rts->NumRenderTargets = color_count;
