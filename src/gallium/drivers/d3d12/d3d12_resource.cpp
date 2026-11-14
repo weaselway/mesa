@@ -2262,7 +2262,9 @@ d3d12_transfer_map(struct pipe_context *pctx,
          d3d12_flush_cmdlist_and_wait(ctx);
       }
 
-      range.End = staging_res_size - range.Begin;
+      /* With Begin >= End, d3d12_bo_map ignores Begin and returns the start
+       * of the buffer, and partial depth maps start far into it. */
+      range.End = staging_res_size;
 
       ptr = d3d12_bo_map(staging_res->bo, &range);
    }
