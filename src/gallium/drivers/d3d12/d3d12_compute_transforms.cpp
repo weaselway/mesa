@@ -199,12 +199,13 @@ get_draw_auto(const nir_shader_compiler_options *options)
    nir_def *state_var_data = d3d12_get_state_var(&b, D3D12_STATE_VAR_TRANSFORM_GENERIC0, "state_var", glsl_uvec4_type(), &state_var);
    nir_def *stride = nir_channel(&b, state_var_data, 0);
    nir_def *vb_offset = nir_channel(&b, state_var_data, 1);
+   nir_def *instance_count = nir_channel(&b, state_var_data, 2);
 
    nir_def *vb_bytes = nir_bcsel(&b, nir_ilt(&b, vb_offset, buffer_filled_size),
       nir_isub(&b, buffer_filled_size, vb_offset), nir_imm_int(&b, 0));
 
    nir_def *vertex_count = nir_idiv(&b, vb_bytes, stride);
-   nir_def *to_write = nir_vec4(&b, vertex_count, nir_imm_int(&b, 1), nir_imm_int(&b, 0), nir_imm_int(&b, 0));
+   nir_def *to_write = nir_vec4(&b, vertex_count, instance_count, nir_imm_int(&b, 0), nir_imm_int(&b, 0));
    nir_store_ssbo(&b, to_write, nir_imm_int(&b, 0), nir_imm_int(&b, 4), 0xf, (gl_access_qualifier)0, 4, 0);
 
    nir_validate_shader(b.shader, "creation");
