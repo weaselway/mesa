@@ -357,15 +357,11 @@ evalute_active_lod(nir_builder *b, nir_tex_instr *tex, lod_params *params)
       int ddy_index = nir_tex_instr_src_index(tex, nir_tex_src_ddy);
       assert(ddx_index >= 0 && ddy_index >= 0);
 
-      nir_def *grad = nir_fmax(b,
-                                   tex->src[ddx_index].src.ssa,
-                                   tex->src[ddy_index].src.ssa);
-
-      nir_def *r = nir_fmul(b, grad, nir_i2f32(b, params->size));
-      nir_def *rho = nir_channel(b, r, 0);
-      for (int i = 1; i < params->ncoord_comp; ++i)
-         rho = nir_fmax(b, rho, nir_channel(b, r, i));
-      lod = nir_flog2(b, rho);
+      /* rho = max(|dP/dx * size|, |dP/dy * size|), GL 4.6 sec. 8.14.1 */
+      nir_def *size = nir_i2f32(b, nir_trim_vector(b, params->size, params->ncoord_comp));
+      nir_def *rho_x = nir_fast_length(b, nir_fmul(b, tex->src[ddx_index].src.ssa, size));
+      nir_def *rho_y = nir_fast_length(b, nir_fmul(b, tex->src[ddy_index].src.ssa, size));
+      lod = nir_flog2(b, nir_fmax(b, rho_x, rho_y));
    } else if (b->shader->info.stage == MESA_SHADER_FRAGMENT){
       lod = dx_get_texture_lod(b, tex);
    } else {
