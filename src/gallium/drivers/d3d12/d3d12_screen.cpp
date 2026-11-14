@@ -535,8 +535,10 @@ d3d12_is_format_supported(struct pipe_screen *pscreen,
       return false;
 
    if (target == PIPE_BUFFER) {
-      /* Replace emulated vertex element formats for the tests */
-      format = d3d12_emulated_vtx_format(format);
+      /* Emulated vertex element formats only work for vertex fetch, not
+       * for texel buffers */
+      if (bind == PIPE_BIND_VERTEX_BUFFER)
+         format = d3d12_emulated_vtx_format(format);
    } else {
       /* Allow 3-comp 32 bit formats only for BOs (needed for ARB_tbo_rgb32) */
       if ((format == PIPE_FORMAT_R32G32B32_FLOAT ||
