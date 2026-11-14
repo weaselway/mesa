@@ -904,6 +904,14 @@ dxil_spirv_nir_passes(nir_shader *nir,
 {
    glsl_type_singleton_init_or_ref();
 
+   /* Vulkan requires OpPhi, OpSelect, copies etc. to preserve denorms even
+    * without DenormPreserve, but DXIL's default fp32 mode lets the driver
+    * flush them anywhere. */
+   if (conf->shader_model_max >= SHADER_MODEL_6_2 &&
+       !(nir->info.float_controls_execution_mode &
+         (FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP32 | FLOAT_CONTROLS_DENORM_PRESERVE_FP32)))
+      nir->info.float_controls_execution_mode |= FLOAT_CONTROLS_DENORM_PRESERVE_FP32;
+
    NIR_PASS(_, nir, nir_opt_vectorize_io_vars,
               nir_var_shader_out |
               (nir->info.stage != MESA_SHADER_VERTEX ? nir_var_shader_in : 0));
