@@ -1321,6 +1321,13 @@ update_so_info(struct pipe_stream_output_info *so_info,
    return so_outputs;
 }
 
+static bool
+is_int_cube_txd(const nir_tex_instr *tex, const void *)
+{
+   return tex->sampler_dim == GLSL_SAMPLER_DIM_CUBE &&
+          (tex->dest_type & (nir_type_int | nir_type_uint));
+}
+
 static struct d3d12_shader_selector *
 d3d12_create_shader_impl(struct d3d12_context *ctx,
                          struct d3d12_shader_selector *sel,
@@ -1334,6 +1341,11 @@ d3d12_create_shader_impl(struct d3d12_context *ctx,
    /* Integer cube maps are not supported in DirectX because sampling is not supported
     * on integer textures and TextureLoad is not supported for cube maps, so we have to
     * lower integer cube maps to be handled like 2D textures arrays*/
+   /* The int cube lowering keeps the 3D gradients of txd, so turn those into
+    * txl with the cube LOD math first. */
+   nir_lower_tex_options int_cube_txd = {};
+   int_cube_txd.lower_txd_cb = is_int_cube_txd;
+   NIR_PASS(_, nir, nir_lower_tex, &int_cube_txd);
    NIR_PASS(_, nir, dxil_nir_lower_int_cubemaps, true);
 
    NIR_PASS(_, nir, dxil_nir_lower_subgroup_id);
