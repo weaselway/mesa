@@ -1703,7 +1703,8 @@ emit_gs_state(struct ntd_context *ctx)
    const nir_shader *s = ctx->shader;
 
    gs_state_nodes[0] = dxil_get_metadata_int32(&ctx->mod, dxil_get_input_primitive(s->info.gs.input_primitive));
-   gs_state_nodes[1] = dxil_get_metadata_int32(&ctx->mod, s->info.gs.vertices_out);
+   /* GL allows max_vertices = 0, DXIL needs at least 1 */
+   gs_state_nodes[1] = dxil_get_metadata_int32(&ctx->mod, MAX2(s->info.gs.vertices_out, 1));
    gs_state_nodes[2] = dxil_get_metadata_int32(&ctx->mod, MAX2(s->info.gs.active_stream_mask, 1));
    gs_state_nodes[3] = dxil_get_metadata_int32(&ctx->mod, dxil_get_primitive_topology(s->info.gs.output_primitive));
    gs_state_nodes[4] = dxil_get_metadata_int32(&ctx->mod, s->info.gs.invocations);
@@ -6439,7 +6440,7 @@ void dxil_fill_validation_state(struct ntd_context *ctx,
       }
       break;
    case DXIL_GEOMETRY_SHADER:
-      psv1->max_vertex_count = ctx->shader->info.gs.vertices_out;
+      psv1->max_vertex_count = MAX2(ctx->shader->info.gs.vertices_out, 1);
       psv0->gs.input_primitive = dxil_get_input_primitive(ctx->shader->info.gs.input_primitive);
       psv0->gs.output_toplology = dxil_get_primitive_topology(ctx->shader->info.gs.output_primitive);
       psv0->gs.output_stream_mask = MAX2(ctx->shader->info.gs.active_stream_mask, 1);
