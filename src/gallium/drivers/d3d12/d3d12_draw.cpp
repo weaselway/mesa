@@ -822,6 +822,7 @@ update_draw_indirect_with_sysvals(struct d3d12_context *ctx,
 
 static bool
 update_draw_auto(struct d3d12_context *ctx,
+   const struct pipe_draw_info *dinfo,
    const struct pipe_draw_indirect_info **indirect_inout,
    struct pipe_draw_indirect_info *indirect_out)
 {
@@ -846,7 +847,8 @@ update_draw_auto(struct d3d12_context *ctx,
 
    ctx->transform_state_vars[0] = ctx->gfx_pipeline_state.ves->strides[0];
    ctx->transform_state_vars[1] = 0;
-   
+   ctx->transform_state_vars[2] = dinfo->instance_count;
+
    pipe_shader_buffer new_cs_ssbo;
    new_cs_ssbo.buffer = target->fill_buffer;
    new_cs_ssbo.buffer_offset = target->fill_buffer_offset;
@@ -922,7 +924,7 @@ d3d12_draw_vbo(struct pipe_context *pctx,
 
    refresh_sub_rect_views(ctx, 0, D3D12_GFX_SHADER_STAGES - 1);
 
-   bool draw_auto = update_draw_auto(ctx, &indirect, &patched_indirect);
+   bool draw_auto = update_draw_auto(ctx, dinfo, &indirect, &patched_indirect);
    bool indirect_with_sysvals = !draw_auto && update_draw_indirect_with_sysvals(ctx, dinfo, drawid_offset, &indirect, &patched_indirect);
    struct d3d12_cmd_signature_key cmd_sig_key;
    memset(&cmd_sig_key, 0, sizeof(cmd_sig_key));
