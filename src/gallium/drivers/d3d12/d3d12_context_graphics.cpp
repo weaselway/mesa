@@ -1925,7 +1925,7 @@ d3d12_disable_fake_so_buffers(struct d3d12_context *ctx)
       ctx->fake_so_buffer_views[i].SizeInBytes = 0;
 
       /* Make sure the buffer is not copied twice */
-      for (unsigned j = i + 1; j <= ctx->gfx_pipeline_state.num_so_targets; ++j) {
+      for (unsigned j = i + 1; j < ctx->gfx_pipeline_state.num_so_targets; ++j) {
          if (ctx->so_targets[j] && ctx->so_targets[j]->buffer == target->base.buffer)
             pipe_so_target_reference(&ctx->fake_so_targets[j], NULL);
       }
