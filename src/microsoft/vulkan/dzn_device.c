@@ -178,6 +178,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .EXT_shader_subgroup_ballot            = true,
       .EXT_shader_subgroup_vote              = true,
       .EXT_subgroup_size_control             = true,
+      .EXT_texel_buffer_alignment            = true,
       .EXT_tooling_info                      = true,
       .EXT_vertex_attribute_divisor          = true,
       .EXT_memory_budget                     = true,
@@ -850,6 +851,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
       .vertexAttributeInstanceRateDivisor = true,
       .vertexAttributeInstanceRateZeroDivisor = true,
       .shaderReplicatedComposites         = true,
+      .texelBufferAlignment               = true,
 
 #ifdef __linux__
       .globalPriorityQuery                = true,
@@ -1110,6 +1112,12 @@ dzn_physical_device_get_properties(const struct dzn_physical_device *pdev,
       .integerDotProduct4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
       .integerDotProductAccumulatingSaturating4x8BitPackedSignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
       .integerDotProductAccumulatingSaturating4x8BitPackedUnsignedAccelerated = pdev->shader_model >= D3D_SHADER_MODEL_6_4,
+      /* Buffer views start at offset / texel size, which can't express
+       * single-texel alignment for 3-component formats. */
+      .storageTexelBufferOffsetAlignmentBytes = 32,
+      .storageTexelBufferOffsetSingleTexelAlignment = false,
+      .uniformTexelBufferOffsetAlignmentBytes = 32,
+      .uniformTexelBufferOffsetSingleTexelAlignment = false,
 
       /* VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT */
       .maxVertexAttribDivisor = UINT32_MAX,
