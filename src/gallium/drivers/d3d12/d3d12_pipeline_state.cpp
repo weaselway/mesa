@@ -46,6 +46,7 @@
 #include "util/u_prim.h"
 
 #include <dxguids/dxguids.h>
+#include <algorithm>
 #include <cstdlib>
 
 struct d3d12_gfx_pso_entry {
@@ -166,6 +167,13 @@ fill_so_declaration(const struct pipe_stream_output_info *info,
       entries[*num_entries].OutputSlot = static_cast<BYTE>(buffer);
       (*num_entries)++;
    }
+
+   /* D3D12 wants the entries grouped by stream. Each buffer belongs to a
+    * single stream, so a stable sort keeps the per-buffer order. */
+   std::stable_sort(entries, entries + *num_entries,
+                    [](const D3D12_SO_DECLARATION_ENTRY &a, const D3D12_SO_DECLARATION_ENTRY &b) {
+                       return a.Stream < b.Stream;
+                    });
 
    for (unsigned i = 0; i < PIPE_MAX_VERTEX_STREAMS; i++)
       strides[i] = info->stride[i] * 4;
