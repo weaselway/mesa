@@ -1875,7 +1875,8 @@ d3d12_disable_fake_so_buffers(struct d3d12_context *ctx)
       key.type = d3d12_compute_transform_type::fake_so_buffer_vertex_count;
       ctx->base.bind_compute_state(&ctx->base, d3d12_get_compute_transform(ctx, &key));
 
-      ctx->transform_state_vars[0] = ctx->gfx_pipeline_state.so_info.stride[i];
+      /* so_info strides are in dwords, the transforms work in bytes */
+      ctx->transform_state_vars[0] = ctx->gfx_pipeline_state.so_info.stride[i] * 4;
       ctx->transform_state_vars[1] = ctx->fake_so_buffer_factor;
 
       pipe_shader_buffer new_cs_ssbos[3];
@@ -1894,7 +1895,7 @@ d3d12_disable_fake_so_buffers(struct d3d12_context *ctx)
       ctx->base.launch_grid(&ctx->base, &grid);
 
       key.type = d3d12_compute_transform_type::fake_so_buffer_copy_back;
-      key.fake_so_buffer_copy_back.stride = ctx->gfx_pipeline_state.so_info.stride[i];
+      key.fake_so_buffer_copy_back.stride = ctx->gfx_pipeline_state.so_info.stride[i] * 4;
       for (unsigned j = 0; j < ctx->gfx_pipeline_state.so_info.num_outputs; ++j) {
          auto& output = ctx->gfx_pipeline_state.so_info.output[j];
          if (output.output_buffer != i)
