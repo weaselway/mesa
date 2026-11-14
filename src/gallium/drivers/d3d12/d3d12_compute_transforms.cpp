@@ -116,7 +116,7 @@ get_fake_so_buffer_copy_back(const nir_shader_compiler_options *options, const d
       glsl_array_type(glsl_uint_type(), 5, 0), "input_ubo");
    input_ubo->data.driver_location = 0;
 
-   nir_def *original_so_filled_size = nir_load_ubo(&b, 1, 32, nir_imm_int(&b, 0), nir_imm_int(&b, 4 * sizeof(uint32_t)),
+   nir_def *original_so_filled_size = nir_load_ubo(&b, 1, 32, nir_imm_int(&b, 1), nir_imm_int(&b, 4 * sizeof(uint32_t)),
       (gl_access_qualifier)0, 4, 0, 4 * sizeof(uint32_t), 4);
 
    nir_variable *state_var = nullptr;
@@ -136,7 +136,7 @@ get_fake_so_buffer_copy_back(const nir_shader_compiler_options *options, const d
       nir_def *input_offset = nir_iadd(&b, input_offset_base, field_offset);
 
       for (unsigned loaded = 0; loaded < output.size; loaded += 16) {
-         unsigned to_load = MIN2(output.size, 16);
+         unsigned to_load = MIN2(output.size - loaded, 16);
          unsigned components = to_load / 4;
          nir_def *loaded_data = nir_load_ssbo(&b, components, 32, nir_imm_int(&b, 1),
             nir_iadd(&b, input_offset, nir_imm_int(&b, loaded)), (gl_access_qualifier)0, 4, 0);
@@ -147,7 +147,8 @@ get_fake_so_buffer_copy_back(const nir_shader_compiler_options *options, const d
 
    nir_validate_shader(b.shader, "creation");
    b.shader->info.num_ssbos = 2;
-   b.shader->info.num_ubos = 1;
+   /* The input UBO is bound at slot 1; this keeps the state vars UBO off that binding */
+   b.shader->info.num_ubos = 2;
 
    return b.shader;
 }
