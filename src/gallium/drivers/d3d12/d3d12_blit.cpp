@@ -743,6 +743,10 @@ d3d12_blit(struct pipe_context *pctx,
          util_blit(ctx, info);
       else if (resolve_stencil_supported(ctx, info))
          blit_resolve_stencil(ctx, info);
+      /* Partial stencil resolves without programmable sample positions or
+       * stencil export: the stencil fallback reads sample 0. */
+      else if (replicate_stencil_supported(ctx, info))
+         blit_replicate_stencil(ctx, info);
       else
          debug_printf("D3D12: resolve unsupported %s -> %s\n",
                     util_format_short_name(info->src.resource->format),
