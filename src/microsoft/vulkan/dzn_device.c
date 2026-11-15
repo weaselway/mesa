@@ -173,6 +173,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .EXT_debug_marker                      = true,
       .EXT_descriptor_indexing               = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
       .EXT_extended_dynamic_state            = true,
+      .EXT_inline_uniform_block              = true,
       .EXT_extended_dynamic_state2           = true,
       .EXT_image_robustness                  = true,
 #if defined(_WIN32)
@@ -842,8 +843,8 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
       .subgroupBroadcastDynamicId         = true,
 
       .robustImageAccess                  = true,
-      .inlineUniformBlock                 = false,
-      .descriptorBindingInlineUniformBlockUpdateAfterBind = false,
+      .inlineUniformBlock                 = true,
+      .descriptorBindingInlineUniformBlockUpdateAfterBind = true,
       .pipelineCreationCacheControl       = true,
       .privateData                        = true,
       .shaderDemoteToHelperInvocation     = true,
@@ -1123,6 +1124,13 @@ dzn_physical_device_get_properties(const struct dzn_physical_device *pdev,
       .framebufferIntegerColorSampleCounts = VK_SAMPLE_COUNT_1_BIT,
          
       /* Core 1.3 */
+      /* Inline uniform blocks are CBVs, so they share the CBV limits. */
+      .maxInlineUniformBlockSize = MAX_INLINE_UNIFORM_BLOCK_SIZE,
+      .maxPerStageDescriptorInlineUniformBlocks = 4,
+      .maxPerStageDescriptorUpdateAfterBindInlineUniformBlocks = 4,
+      .maxDescriptorSetInlineUniformBlocks = 4,
+      .maxDescriptorSetUpdateAfterBindInlineUniformBlocks = 4,
+      .maxInlineUniformTotalSize = 4 * MAX_INLINE_UNIFORM_BLOCK_SIZE,
       .minSubgroupSize = pdev->options1.WaveOps ? pdev->options1.WaveLaneCountMin : 1,
       .maxSubgroupSize = pdev->options1.WaveOps ? pdev->options1.WaveLaneCountMax : 1,
       .maxComputeWorkgroupSubgroups = D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP /
