@@ -2302,13 +2302,40 @@ struct dzn_bridge_job {
    int sync_file;
    uint32_t syncobj;
    uint64_t point;
+   /* Attach sync_file to the point instead of waiting */
+   bool signal;
 };
+
+/* Adds a timeline point that signals with sync_file. */
+static int
+dzn_syncobj_add_point(struct util_sync_provider *sync, uint32_t syncobj,
+                      uint64_t point, int sync_file)
+{
+   uint32_t tmp;
+   int ret = sync->create(sync, 0, &tmp);
+   if (ret)
+      return ret;
+
+   ret = sync->import_sync_file(sync, tmp, sync_file);
+   if (!ret)
+      ret = sync->transfer(sync, syncobj, point, tmp, 0, 0);
+   sync->destroy(sync, tmp);
+   return ret;
+}
 
 static void
 dzn_bridge_job_execute(void *data, void *gdata, int thread_index)
 {
    struct dzn_bridge_job *job = data;
    int ret;
+
+   if (job->signal) {
+      if (dzn_syncobj_add_point(job->sync, job->syncobj, job->point, job->sync_file))
+         mesa_loge("dzn: signalling a DRM syncobj failed: %s", strerror(errno));
+      close(job->sync_file);
+      ID3D12Fence_Signal(job->fence, job->value);
+      return;
+   }
 
    /* Wait in slices: a point that is never submitted would otherwise block
     * dzn_queue_finish() forever. */
@@ -2452,15 +2479,42 @@ dzn_queue_signal_drm_syncobj(struct dzn_queue *queue,
       return VK_SUCCESS;
    }
 
-   uint32_t tmp;
-   if (sync->create(sync, 0, &tmp))
-      return vk_errorf(device, VK_ERROR_UNKNOWN, "DRM_IOCTL_SYNCOBJ_CREATE failed: %m");
+   /* Timeline points must be added in order. An earlier syncobj wait on this
+    * queue may still wait for a lower point (e.g. a host signal), so add ours
+    * from the bridge thread after it. The queue waits for the job, so the
+    * semaphore is still alive when it runs.
+    * shortcut: waits on D3D12 timelines that are not signalled yet are not
+    * ordered this way, upgrade if an app signals a syncobj behind one.
+    */
+   if (queue->bridge_fence) {
+      struct dzn_bridge_job *job = malloc(sizeof(*job));
+      if (!job)
+         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   int ret = sync->import_sync_file(sync, tmp, sync_file);
-   if (!ret)
-      ret = sync->transfer(sync, syncobj, signal->signal_value, tmp, 0, 0);
-   sync->destroy(sync, tmp);
-   if (ret)
+      *job = (struct dzn_bridge_job) {
+         .queue = queue,
+         .sync = sync,
+         .fence = queue->bridge_fence,
+         .value = ++queue->bridge_point,
+         .sync_file = os_dupfd_cloexec(sync_file),
+         .syncobj = syncobj,
+         .point = signal->signal_value,
+         .signal = true,
+      };
+      if (job->sync_file < 0) {
+         free(job);
+         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      }
+      util_queue_add_job(&queue->bridge_queue, job, NULL, dzn_bridge_job_execute,
+                         dzn_bridge_job_free, 0);
+
+      if (FAILED(ID3D12CommandQueue_Wait(queue->cmdqueue, queue->bridge_fence,
+                                         queue->bridge_point)))
+         return vk_error(device, VK_ERROR_UNKNOWN);
+      return VK_SUCCESS;
+   }
+
+   if (dzn_syncobj_add_point(sync, syncobj, signal->signal_value, sync_file))
       return vk_errorf(device, VK_ERROR_UNKNOWN, "DRM_IOCTL_SYNCOBJ_TRANSFER failed: %m");
 
    return VK_SUCCESS;
