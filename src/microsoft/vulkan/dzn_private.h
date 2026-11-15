@@ -609,6 +609,9 @@ struct dzn_graphics_pipeline_dyn_state {
    struct {
       uint8_t fail_op, pass_op, depth_fail_op, compare_op;
    } stencil_front, stencil_back;
+   uint8_t rasterizer_discard;
+   uint8_t depth_bias_enable;
+   uint8_t primitive_restart;
 };
 
 enum dzn_dyn_state_bits {
@@ -622,6 +625,9 @@ enum dzn_dyn_state_bits {
    DZN_DYN_STENCIL_OP = BITFIELD_BIT(7),
    DZN_DYN_PRIMITIVE_TOPOLOGY = BITFIELD_BIT(8),
    DZN_DYN_VERTEX_STRIDE = BITFIELD_BIT(9),
+   DZN_DYN_RASTERIZER_DISCARD = BITFIELD_BIT(10),
+   DZN_DYN_DEPTH_BIAS_ENABLE = BITFIELD_BIT(11),
+   DZN_DYN_PRIMITIVE_RESTART = BITFIELD_BIT(12),
 };
 
 #define DZN_DYN_ZSA_BITS (DZN_DYN_DEPTH_TEST | DZN_DYN_DEPTH_WRITE | \
