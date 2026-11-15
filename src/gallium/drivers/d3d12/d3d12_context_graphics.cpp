@@ -1010,7 +1010,7 @@ d3d12_set_sampler_views(struct pipe_context *pctx,
 
       if (views[i]) {
          dxil_wrap_sampler_state &wss = ctx->tex_wrap_states[shader_type][start_slot + i];
-         dxil_texture_swizzle_state &swizzle_state = ctx->tex_swizzle_state[shader_type][i];
+         dxil_texture_swizzle_state &swizzle_state = ctx->tex_swizzle_state[shader_type][start_slot + i];
          if (util_format_is_pure_integer(views[i]->format)) {
             ctx->has_int_samplers |= shader_bit;
             wss.is_int_sampler = 1;
@@ -1647,7 +1647,8 @@ d3d12_set_shader_buffers(struct pipe_context *pctx,
          slot->buffer_offset = buffers[i].buffer_offset;
          slot->buffer_size = buffers[i].buffer_size;
          util_range_add(buffers[i].buffer, &d3d12_resource(buffers[i].buffer)->valid_buffer_range,
-                        buffers[i].buffer_offset, buffers[i].buffer_size);
+                        buffers[i].buffer_offset,
+                        buffers[i].buffer_offset + buffers[i].buffer_size);
          d3d12_increment_ssbo_bind_count(ctx, shader, d3d12_resource(buffers[i].buffer));
       } else
          memset(slot, 0, sizeof(*slot));
@@ -1738,7 +1739,7 @@ d3d12_set_shader_images(struct pipe_context *pctx,
          pipe_resource_reference(&slot->resource, NULL);
       }
 
-      ctx->image_view_emulation_formats[shader][i] = PIPE_FORMAT_NONE;
+      ctx->image_view_emulation_formats[shader][start_slot + i] = PIPE_FORMAT_NONE;
       if (i < count && images && images[i].resource) {
          pipe_resource_reference(&slot->resource, images[i].resource);
          *slot = images[i];
@@ -1750,12 +1751,13 @@ d3d12_set_shader_images(struct pipe_context *pctx,
              d3d12_get_typeless_format(images[i].format) !=
              d3d12_get_typeless_format(images[i].resource->format)) {
             /* Can't use D3D casting, have to use shader lowering instead */
-            ctx->image_view_emulation_formats[shader][i] =
+            ctx->image_view_emulation_formats[shader][start_slot + i] =
                get_shader_image_emulation_format(images[i].resource->format);
          }
          if (images[i].resource->target == PIPE_BUFFER) {
             util_range_add(images[i].resource, &d3d12_resource(images[i].resource)->valid_buffer_range,
-                           images[i].u.buf.offset, images[i].u.buf.size);
+                           images[i].u.buf.offset,
+                           images[i].u.buf.offset + images[i].u.buf.size);
          }
       } else
          memset(slot, 0, sizeof(*slot));
