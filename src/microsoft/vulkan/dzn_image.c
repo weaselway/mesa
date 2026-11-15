@@ -933,6 +933,38 @@ dzn_GetImageMemoryRequirements2(VkDevice _device,
 }
 
 VKAPI_ATTR void VKAPI_CALL
+dzn_GetDeviceImageMemoryRequirements(VkDevice _device,
+                                     const VkDeviceImageMemoryRequirements *pInfo,
+                                     VkMemoryRequirements2 *pMemoryRequirements)
+{
+   VK_FROM_HANDLE(dzn_device, device, _device);
+   VkImage image;
+
+   /* Images don't own D3D12 resources before binding, a temporary one is cheap. */
+   if (dzn_image_create(device, pInfo->pCreateInfo, NULL, &image) != VK_SUCCESS) {
+      memset(&pMemoryRequirements->memoryRequirements, 0,
+             sizeof(pMemoryRequirements->memoryRequirements));
+      return;
+   }
+
+   const VkImageMemoryRequirementsInfo2 info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
+      .image = image,
+   };
+   dzn_GetImageMemoryRequirements2(_device, &info, pMemoryRequirements);
+   dzn_image_destroy(dzn_image_from_handle(image), NULL);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_GetDeviceImageSparseMemoryRequirements(VkDevice device,
+                                           const VkDeviceImageMemoryRequirements *pInfo,
+                                           uint32_t *pSparseMemoryRequirementCount,
+                                           VkSparseImageMemoryRequirements2 *pSparseMemoryRequirements)
+{
+   *pSparseMemoryRequirementCount = 0;
+}
+
+VKAPI_ATTR void VKAPI_CALL
 dzn_GetImageSubresourceLayout(VkDevice _device,
                               VkImage _image,
                               const VkImageSubresource *subresource,
