@@ -177,6 +177,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .EXT_debug_marker                      = true,
       .EXT_depth_clip_control                = true,
       .EXT_descriptor_indexing               = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
+      .EXT_image_robustness                  = true,
 #if defined(_WIN32)
       .EXT_external_memory_host              = pdev->dev13,
 #endif
@@ -856,7 +857,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
       .shaderOutputLayer                  = false,
       .subgroupBroadcastDynamicId         = true,
 
-      .robustImageAccess                  = false,
+      .robustImageAccess                  = true,
       .inlineUniformBlock                 = false,
       .descriptorBindingInlineUniformBlockUpdateAfterBind = false,
       .pipelineCreationCacheControl       = true,
