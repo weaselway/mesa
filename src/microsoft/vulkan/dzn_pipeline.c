@@ -38,6 +38,7 @@
 #include "vk_pipeline.h"
 #include "vk_pipeline_cache.h"
 
+#include "util/os_time.h"
 #include "util/u_debug.h"
 
 #define d3d12_pipeline_state_stream_new_desc(__stream, __maxstreamsz, __id, __type, __desc) \
@@ -802,7 +803,8 @@ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
                                       D3D12_PIPELINE_STATE_STREAM_DESC *out,
                                       D3D12_INPUT_ELEMENT_DESC *attribs,
                                       enum pipe_format *vi_conversions,
-                                      const VkGraphicsPipelineCreateInfo *info)
+                                      const VkGraphicsPipelineCreateInfo *info,
+                                      bool *cache_hit)
 {
    struct dzn_physical_device *pdev =
       container_of(device->vk.physical, struct dzn_physical_device, vk);
@@ -924,13 +926,12 @@ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
       }
       _mesa_blake3_final(&pipeline_hash_ctx, pipeline_hash);
 
-      bool cache_hit;
       ret = dzn_pipeline_cache_lookup_gfx_pipeline(pipeline, cache, pipeline_hash,
-                                                   &cache_hit);
+                                                   cache_hit);
       if (ret != VK_SUCCESS)
          return ret;
 
-      if (cache_hit)
+      if (*cache_hit)
          return VK_SUCCESS;
    }
 
@@ -1918,6 +1919,28 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
    vk_free2(&pipeline->base.base.device->alloc, alloc, pipeline);
 }
 
+/* VK_EXT_pipeline_creation_feedback. Stages get the pipeline's flags, their
+ * own compile time is not tracked. */
+static void
+dzn_pipeline_write_feedback(const void *pnext, int64_t start, bool cache_hit)
+{
+   const VkPipelineCreationFeedbackCreateInfo *feedback =
+      vk_find_struct_const(pnext, PIPELINE_CREATION_FEEDBACK_CREATE_INFO);
+   if (!feedback)
+      return;
+
+   VkPipelineCreationFeedbackFlags flags = VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT;
+   if (cache_hit)
+      flags |= VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT;
+
+   feedback->pPipelineCreationFeedback->flags = flags;
+   feedback->pPipelineCreationFeedback->duration = os_time_get_nano() - start;
+   for (uint32_t i = 0; i < feedback->pipelineStageCreationFeedbackCount; i++) {
+      feedback->pPipelineStageCreationFeedbacks[i].flags = flags;
+      feedback->pPipelineStageCreationFeedbacks[i].duration = 0;
+   }
+}
+
 static VkResult
 dzn_graphics_pipeline_create(struct dzn_device *device,
                              VkPipelineCache cache,
@@ -2099,12 +2122,15 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
       pipeline->multiview.native_view_instancing = true;
    }
 
+   int64_t compile_start = os_time_get_nano();
+   bool cache_hit = false;
    ret = dzn_graphics_pipeline_compile_shaders(device, pipeline, pcache,
                                                layout, stream_desc,
                                                attribs, vi_conversions,
-                                               pCreateInfo);
+                                               pCreateInfo, &cache_hit);
    if (ret != VK_SUCCESS)
       goto out;
+   dzn_pipeline_write_feedback(pCreateInfo->pNext, compile_start, cache_hit);
 
    /* If we have no position output from a pre-rasterizer stage, we need to make sure that
     * depth is disabled, to fully disable the rasterizer. We can only know this after compiling
@@ -2555,7 +2581,8 @@ dzn_compute_pipeline_compile_shader(struct dzn_device *device,
                                     const struct dzn_pipeline_layout *layout,
                                     D3D12_PIPELINE_STATE_STREAM_DESC *stream_desc,
                                     D3D12_SHADER_BYTECODE *shader,
-                                    const VkComputePipelineCreateInfo *info)
+                                    const VkComputePipelineCreateInfo *info,
+                                    bool *cache_hit)
 {
    struct dzn_physical_device *pdev =
       container_of(device->vk.physical, struct dzn_physical_device, vk);
@@ -2574,11 +2601,10 @@ dzn_compute_pipeline_compile_shader(struct dzn_device *device,
                         sizeof(layout->stages[MESA_SHADER_COMPUTE].hash));
       _mesa_blake3_final(&pipeline_hash_ctx, pipeline_hash);
 
-      bool cache_hit = false;
       ret = dzn_pipeline_cache_lookup_compute_pipeline(cache, pipeline_hash,
                                                        stream_desc, shader,
-                                                       &cache_hit);
-      if (ret != VK_SUCCESS || cache_hit)
+                                                       cache_hit);
+      if (ret != VK_SUCCESS || *cache_hit)
          goto out;
    }
 
@@ -2678,11 +2704,15 @@ dzn_compute_pipeline_create(struct dzn_device *device,
                      layout, &stream_desc);
 
    D3D12_SHADER_BYTECODE shader = { 0 };
+   int64_t compile_start = os_time_get_nano();
+   bool cache_hit = false;
    VkResult ret =
       dzn_compute_pipeline_compile_shader(device, pipeline, pcache, layout,
-                                          &stream_desc, &shader, pCreateInfo);
+                                          &stream_desc, &shader, pCreateInfo,
+                                          &cache_hit);
    if (ret != VK_SUCCESS)
       goto out;
+   dzn_pipeline_write_feedback(pCreateInfo->pNext, compile_start, cache_hit);
 
    if (FAILED(ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
                                                 &IID_ID3D12PipelineState,
