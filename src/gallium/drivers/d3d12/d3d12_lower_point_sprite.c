@@ -305,7 +305,6 @@ d3d12_lower_point_sprite(nir_shader *shader,
    shader->info.gs.vertices_out = (uint16_t) (shader->info.gs.vertices_out * 4 /
       util_bitcount(shader->info.gs.active_stream_mask));
    shader->info.gs.active_stream_mask = 1;
-   d3d12_clamp_gs_vertices_out(shader);
 
    return progress;
 }
