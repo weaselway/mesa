@@ -200,6 +200,9 @@ dzn_dyn_state_bit(VkDynamicState state)
    case VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE: return DZN_DYN_DEPTH_BOUNDS_TEST;
    case VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE: return DZN_DYN_STENCIL_TEST;
    case VK_DYNAMIC_STATE_STENCIL_OP: return DZN_DYN_STENCIL_OP;
+   case VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE: return DZN_DYN_RASTERIZER_DISCARD;
+   case VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE: return DZN_DYN_DEPTH_BIAS_ENABLE;
+   case VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE: return DZN_DYN_PRIMITIVE_RESTART;
    default: return 0;
    }
 }
@@ -216,6 +219,15 @@ dzn_graphics_pipeline_has_dynamic_state(const VkGraphicsPipelineCreateInfo *info
          return true;
    }
    return false;
+}
+
+/* Rasterizer discard known at pipeline creation. A dynamic one is handled by
+ * the variants, so everything after the rasterizer is still compiled. */
+static bool
+dzn_graphics_pipeline_static_rast_discard(const VkGraphicsPipelineCreateInfo *info)
+{
+   return info->pRasterizationState->rasterizerDiscardEnable &&
+          !dzn_graphics_pipeline_has_dynamic_state(info, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE);
 }
 
 static dxil_spirv_shader_stage
@@ -844,7 +856,7 @@ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
    struct dzn_physical_device *pdev =
       container_of(device->vk.physical, struct dzn_physical_device, vk);
    const VkPipelineViewportStateCreateInfo *vp_info =
-      info->pRasterizationState->rasterizerDiscardEnable ?
+      dzn_graphics_pipeline_static_rast_discard(info) ?
       NULL : info->pViewportState;
    struct {
       const VkPipelineShaderStageCreateInfo *info;
@@ -878,7 +890,7 @@ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
 
       if (stage == MESA_SHADER_FRAGMENT &&
           info->pRasterizationState &&
-          (info->pRasterizationState->rasterizerDiscardEnable ||
+          (dzn_graphics_pipeline_static_rast_discard(info) ||
            dzn_graphics_pipeline_culls_everything(info))) {
          /* Disable rasterization (AKA leave fragment shader NULL) when
           * front+back culling or discard is set.
@@ -923,7 +935,7 @@ dzn_graphics_pipeline_compile_shaders(struct dzn_device *device,
    }
 
    bool force_sample_rate_shading =
-      !info->pRasterizationState->rasterizerDiscardEnable &&
+      !dzn_graphics_pipeline_static_rast_discard(info) &&
       info->pMultisampleState &&
       info->pMultisampleState->sampleShadingEnable;
 
@@ -1360,7 +1372,8 @@ dzn_graphics_pipeline_translate_ia(struct dzn_device *device,
       dzn_translate_prim_topology(in_ia->topology, pipeline->ia.patch_control_points,
                                   pdev->options15.TriangleFanSupported);
 
-   if (in_ia->primitiveRestartEnable) {
+   pipeline->dyn.state.primitive_restart = in_ia->primitiveRestartEnable;
+   if (in_ia->primitiveRestartEnable || (pipeline->dyn.mask & DZN_DYN_PRIMITIVE_RESTART)) {
       d3d12_gfx_pipeline_state_stream_new_desc(out, IB_STRIP_CUT_VALUE, D3D12_INDEX_BUFFER_STRIP_CUT_VALUE, ib_strip_cut);
       pipeline->templates.desc_offsets.ib_strip_cut =
          (uintptr_t)ib_strip_cut - (uintptr_t)out->pPipelineStateSubobjectStream;
@@ -1418,12 +1431,17 @@ dzn_graphics_pipeline_translate_rast(struct dzn_device *device,
    const VkPipelineRasterizationStateCreateInfo *in_rast =
       in->pRasterizationState;
    const VkPipelineViewportStateCreateInfo *in_vp =
-      in_rast->rasterizerDiscardEnable ? NULL : in->pViewportState;
+      dzn_graphics_pipeline_static_rast_discard(in) ? NULL : in->pViewportState;
    const VkPipelineMultisampleStateCreateInfo *in_ms =
-      in_rast->rasterizerDiscardEnable ? NULL : in->pMultisampleState;
+      dzn_graphics_pipeline_static_rast_discard(in) ? NULL : in->pMultisampleState;
 
    pipeline->dyn.state.cull_mode = in_rast->cullMode;
    pipeline->dyn.state.front_face = in_rast->frontFace;
+   pipeline->dyn.state.rasterizer_discard = in_rast->rasterizerDiscardEnable;
+   pipeline->dyn.state.depth_bias_enable = in_rast->depthBiasEnable;
+   /* With a dynamic enable, the template has the bias and variants drop it. */
+   bool depth_bias = in_rast->depthBiasEnable ||
+                     (pipeline->dyn.mask & DZN_DYN_DEPTH_BIAS_ENABLE);
    pipeline->dyn.draws_polygons = dzn_graphics_pipeline_draws_polygons(in);
 
    if (in_vp) {
@@ -1450,7 +1468,7 @@ dzn_graphics_pipeline_translate_rast(struct dzn_device *device,
       desc->CullMode = translate_cull_mode(in_rast->cullMode);
       desc->FrontCounterClockwise =
          in_rast->frontFace == VK_FRONT_FACE_COUNTER_CLOCKWISE;
-      if (in_rast->depthBiasEnable) {
+      if (depth_bias) {
          desc->DepthBias = in_rast->depthBiasConstantFactor;
          desc->SlopeScaledDepthBias = in_rast->depthBiasSlopeFactor;
          desc->DepthBiasClamp = in_rast->depthBiasClamp;
@@ -1469,7 +1487,7 @@ dzn_graphics_pipeline_translate_rast(struct dzn_device *device,
       desc->CullMode = translate_cull_mode(in_rast->cullMode);
       desc->FrontCounterClockwise =
          in_rast->frontFace == VK_FRONT_FACE_COUNTER_CLOCKWISE;
-      if (in_rast->depthBiasEnable) {
+      if (depth_bias) {
          if (rast_type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER1)
             ((D3D12_RASTERIZER_DESC1 *)desc)->DepthBias = in_rast->depthBiasConstantFactor;
          else
@@ -1496,10 +1514,8 @@ dzn_graphics_pipeline_translate_ms(struct dzn_graphics_pipeline *pipeline,
                                    D3D12_PIPELINE_STATE_STREAM_DESC *out,
                                    const VkGraphicsPipelineCreateInfo *in)
 {
-   const VkPipelineRasterizationStateCreateInfo *in_rast =
-      in->pRasterizationState;
    const VkPipelineMultisampleStateCreateInfo *in_ms =
-      in_rast->rasterizerDiscardEnable ? NULL : in->pMultisampleState;
+      dzn_graphics_pipeline_static_rast_discard(in) ? NULL : in->pMultisampleState;
 
    if (!in_ms)
       return;
@@ -1620,10 +1636,8 @@ dzn_graphics_pipeline_translate_zsa(struct dzn_device *device,
    struct dzn_physical_device *pdev =
       container_of(device->vk.physical, struct dzn_physical_device, vk);
 
-   const VkPipelineRasterizationStateCreateInfo *in_rast =
-      in->pRasterizationState;
    const VkPipelineDepthStencilStateCreateInfo *in_zsa =
-      in_rast->rasterizerDiscardEnable ? NULL : in->pDepthStencilState;
+      dzn_graphics_pipeline_static_rast_discard(in) ? NULL : in->pDepthStencilState;
    const VkPipelineRenderingCreateInfo *ri = vk_get_pipeline_rendering_create_info(in);
 
    if (!in_zsa ||
@@ -1707,7 +1721,7 @@ dzn_graphics_pipeline_translate_zsa(struct dzn_device *device,
     * if a device without IndependentFrontAndBackStencilRefMaskSupported needs
     * a back-face-only reference.
     */
-   if (pipeline->dyn.mask & (DZN_DYN_ZSA_BITS | DZN_DYN_CULL_MODE)) {
+   if (pipeline->dyn.mask & (DZN_DYN_ZSA_BITS | DZN_DYN_CULL_MODE | DZN_DYN_RASTERIZER_DISCARD)) {
       pipeline->zsa.stencil_test.front.uses_ref = true;
       pipeline->zsa.stencil_test.back.uses_ref = false;
    }
@@ -1821,12 +1835,10 @@ dzn_graphics_pipeline_translate_blend(struct dzn_graphics_pipeline *pipeline,
                                       D3D12_PIPELINE_STATE_STREAM_DESC *out,
                                       const VkGraphicsPipelineCreateInfo *in)
 {
-   const VkPipelineRasterizationStateCreateInfo *in_rast =
-      in->pRasterizationState;
    const VkPipelineColorBlendStateCreateInfo *in_blend =
-      in_rast->rasterizerDiscardEnable ? NULL : in->pColorBlendState;
+      dzn_graphics_pipeline_static_rast_discard(in) ? NULL : in->pColorBlendState;
    const VkPipelineMultisampleStateCreateInfo *in_ms =
-      in_rast->rasterizerDiscardEnable ? NULL : in->pMultisampleState;
+      dzn_graphics_pipeline_static_rast_discard(in) ? NULL : in->pMultisampleState;
 
    if (!in_blend || !in_ms)
       return;
@@ -2114,6 +2126,9 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
          case VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE:
          case VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE:
          case VK_DYNAMIC_STATE_STENCIL_OP:
+         case VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE:
+         case VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE:
+         case VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE:
             pipeline->dyn.mask |= dzn_dyn_state_bit(pCreateInfo->pDynamicState->pDynamicStates[i]);
             ret = dzn_graphics_pipeline_prepare_for_variants(device, pipeline);
             if (ret)
@@ -2385,6 +2400,12 @@ copy_dyn_state(uint32_t mask,
       dst->stencil_front = src->stencil_front;
       dst->stencil_back = src->stencil_back;
    }
+   if (mask & DZN_DYN_RASTERIZER_DISCARD)
+      dst->rasterizer_discard = src->rasterizer_discard;
+   if (mask & DZN_DYN_DEPTH_BIAS_ENABLE)
+      dst->depth_bias_enable = src->depth_bias_enable;
+   if (mask & DZN_DYN_PRIMITIVE_RESTART)
+      dst->primitive_restart = src->primitive_restart;
 }
 
 /* Rebuilds the depth/stencil desc of a pipeline with dynamic depth/stencil
@@ -2487,15 +2508,19 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
 
    struct dzn_graphics_pipeline_variant_key masked_key = { 0 };
 
-   if (dzn_graphics_pipeline_get_desc_template(pipeline, ib_strip_cut))
+   if (dzn_graphics_pipeline_get_desc_template(pipeline, ib_strip_cut) &&
+       (!(pipeline->dyn.mask & DZN_DYN_PRIMITIVE_RESTART) || key->dyn.primitive_restart))
       masked_key.ib_strip_cut = key->ib_strip_cut;
+   else if (dzn_graphics_pipeline_get_desc_template(pipeline, ib_strip_cut))
+      masked_key.ib_strip_cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
 
    if (!pdev->options16.DynamicDepthBiasSupported &&
        dzn_graphics_pipeline_get_desc_template(pipeline, rast) &&
        pipeline->zsa.dynamic_depth_bias)
       masked_key.depth_bias = key->depth_bias;
 
-   bool dyn_zsa = pipeline->dyn.mask & (DZN_DYN_ZSA_BITS | DZN_DYN_CULL_MODE);
+   bool dyn_zsa = pipeline->dyn.mask & (DZN_DYN_ZSA_BITS | DZN_DYN_CULL_MODE |
+                                        DZN_DYN_RASTERIZER_DISCARD);
    copy_dyn_state(pipeline->dyn.mask, &key->dyn, &masked_key.dyn);
    if (dyn_zsa) {
       if (pipeline->zsa.stencil_test.dynamic_compare_mask) {
@@ -2551,7 +2576,16 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
       }
 
       /* D3D12 can't cull front and back faces, turn rasterization off. */
+      if (rast && (pipeline->dyn.mask & DZN_DYN_DEPTH_BIAS_ENABLE) && !state.depth_bias_enable) {
+         /* DepthBias is an INT in D3D12_RASTERIZER_DESC and a FLOAT in the
+          * later versions, zero is the same bits in both. */
+         rast->DepthBias = 0;
+         rast->DepthBiasClamp = 0.0f;
+         rast->SlopeScaledDepthBias = 0.0f;
+      }
+
       bool rast_off = pipeline->rast_disabled_from_missing_position ||
+         state.rasterizer_discard ||
          ((pipeline->dyn.mask & DZN_DYN_CULL_MODE) &&
           state.cull_mode == VK_CULL_MODE_FRONT_AND_BACK &&
           pipeline->dyn.draws_polygons);
