@@ -650,6 +650,9 @@ d3d12_get_query_result_resource(struct pipe_context *pctx,
       D3D12_WRITEBUFFERIMMEDIATE_MODE modes[2] = { D3D12_WRITEBUFFERIMMEDIATE_MODE_DEFAULT, D3D12_WRITEBUFFERIMMEDIATE_MODE_DEFAULT };
       ctx->cmdlist8->WriteBufferImmediate(result_type == PIPE_QUERY_TYPE_I64 || result_type == PIPE_QUERY_TYPE_U64 ? 2 : 1,
                                           params, modes);
+      /* So a later map waits for this write */
+      d3d12_batch_reference_resource(d3d12_current_batch(ctx), res, true);
+      ctx->has_commands = true;
       return;
    }
 
