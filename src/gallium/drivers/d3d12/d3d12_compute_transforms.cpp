@@ -299,6 +299,8 @@ get_query_resolve(const nir_shader_compiler_options *options, const d3d12_comput
                base_offset = offsetof(D3D12_QUERY_DATA_PIPELINE_STATISTICS, GSPrimitives) / sizeof(UINT64);
             else if (subquery_index == 2)
                base_offset = offsetof(D3D12_QUERY_DATA_PIPELINE_STATISTICS, IAPrimitives) / sizeof(UINT64);
+            else if (subquery_index == 3)
+               base_offset = offsetof(D3D12_QUERY_DATA_PIPELINE_STATISTICS, CInvocations) / sizeof(UINT64);
          }
          break;
       case PIPE_QUERY_PIPELINE_STATISTICS:
