@@ -176,6 +176,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .EXT_external_memory_host              = pdev->dev13,
 #endif
       .EXT_pipeline_creation_cache_control   = true,
+      .EXT_pipeline_creation_feedback        = true,
       .EXT_private_data                      = true,
       .EXT_scalar_block_layout               = true,
       .EXT_separate_stencil_usage            = true,
