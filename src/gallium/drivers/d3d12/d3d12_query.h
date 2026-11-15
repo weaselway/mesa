@@ -41,6 +41,11 @@ d3d12_validate_queries(struct d3d12_context *ctx);
 void
 d3d12_enable_predication(struct d3d12_context *ctx);
 
+/* True when a PRIMITIVES_GENERATED query needs a passthrough GS to count the
+ * primitives the tessellator produced. */
+bool
+d3d12_needs_tess_primitive_count(struct d3d12_context *ctx);
+
 constexpr unsigned MAX_SUBQUERIES = 4;
 
 struct d3d12_query_impl {
