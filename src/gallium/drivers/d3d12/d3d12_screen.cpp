@@ -568,8 +568,10 @@ d3d12_is_format_supported(struct pipe_screen *pscreen,
       case 1:
       case 4:
       case 8:
-      case 16:
          return true;
+      case 16:
+         /* UAV-only ForcedSampleCount 16 needs feature level 11_1 */
+         return screen->max_feature_level >= D3D_FEATURE_LEVEL_11_1;
       default:
          return false;
       }
