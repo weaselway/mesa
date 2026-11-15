@@ -3546,6 +3546,9 @@ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint
 
    if (old_pipeline_state != new_pipeline_state) {
       ID3D12GraphicsCommandList1_SetPipelineState(cmdbuf->cmdlist, pipeline->state);
+      /* The bias depends on the pipeline's depth bias enable. */
+      if (bindpoint == VK_PIPELINE_BIND_POINT_GRAPHICS && cmdbuf->cmdlist9)
+         cmdbuf->state.dirty |= DZN_CMD_DIRTY_DEPTH_BIAS;
       cmdbuf->state.pipeline = pipeline;
    }
 
@@ -3904,12 +3907,22 @@ dzn_cmd_buffer_update_depth_bounds(struct dzn_cmd_buffer *cmdbuf)
 static void
 dzn_cmd_buffer_update_depth_bias(struct dzn_cmd_buffer *cmdbuf)
 {
-   if (cmdbuf->state.dirty & DZN_CMD_DIRTY_DEPTH_BIAS) {
+   struct dzn_physical_device *pdev =
+      container_of(cmdbuf->vk.base.device->physical, struct dzn_physical_device, vk);
+   const struct dzn_graphics_pipeline *pipeline =
+      (const struct dzn_graphics_pipeline *)cmdbuf->state.pipeline;
+
+   if ((cmdbuf->state.dirty & DZN_CMD_DIRTY_DEPTH_BIAS) &&
+       pdev->options16.DynamicDepthBiasSupported && pipeline->zsa.dynamic_depth_bias) {
       assert(cmdbuf->cmdlist9);
+      bool enable = (pipeline->dyn.mask & DZN_DYN_DEPTH_BIAS_ENABLE) ?
+                    cmdbuf->state.pipeline_variant.dyn.depth_bias_enable :
+                    pipeline->dyn.state.depth_bias_enable;
+      const struct dzn_graphics_pipeline_variant_key *key = &cmdbuf->state.pipeline_variant;
       ID3D12GraphicsCommandList9_RSSetDepthBias(cmdbuf->cmdlist9,
-                                                cmdbuf->state.pipeline_variant.depth_bias.constant_factor,
-                                                cmdbuf->state.pipeline_variant.depth_bias.clamp,
-                                                cmdbuf->state.pipeline_variant.depth_bias.slope_factor);
+                                                enable ? key->depth_bias.constant_factor : 0,
+                                                enable ? key->depth_bias.clamp : 0,
+                                                enable ? key->depth_bias.slope_factor : 0);
    }
 }
 
@@ -3964,6 +3977,16 @@ dzn_cmd_buffer_triangle_fan_create_index(struct dzn_cmd_buffer *cmdbuf, uint32_t
    return VK_SUCCESS;
 }
 
+static bool
+dzn_cmd_buffer_primitive_restart(const struct dzn_cmd_buffer *cmdbuf,
+                                 const struct dzn_graphics_pipeline *pipeline)
+{
+   if (pipeline->dyn.mask & DZN_DYN_PRIMITIVE_RESTART)
+      return cmdbuf->state.pipeline_variant.dyn.primitive_restart;
+
+   return dzn_graphics_pipeline_get_desc_template(pipeline, ib_strip_cut) != NULL;
+}
+
 static VkResult
 dzn_cmd_buffer_triangle_fan_rewrite_index(struct dzn_cmd_buffer *cmdbuf,
                                           uint32_t *index_count,
@@ -3994,8 +4017,7 @@ dzn_cmd_buffer_triangle_fan_rewrite_index(struct dzn_cmd_buffer *cmdbuf,
 
    ASSERTED const struct dzn_graphics_pipeline *gfx_pipeline = (const struct dzn_graphics_pipeline *)
       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
-   ASSERTED bool prim_restart =
-      dzn_graphics_pipeline_get_desc_template(gfx_pipeline, ib_strip_cut) != NULL;
+   ASSERTED bool prim_restart = dzn_cmd_buffer_primitive_restart(cmdbuf, gfx_pipeline);
 
    assert(!prim_restart);
 
@@ -4374,8 +4396,7 @@ dzn_cmd_buffer_indirect_draw(struct dzn_cmd_buffer *cmdbuf,
       indexed ?
       sizeof(D3D12_DRAW_INDEXED_ARGUMENTS) :
       sizeof(D3D12_DRAW_ARGUMENTS);
-   bool prim_restart =
-      dzn_graphics_pipeline_get_desc_template(pipeline, ib_strip_cut) != NULL;
+   bool prim_restart = dzn_cmd_buffer_primitive_restart(cmdbuf, pipeline);
 
    draw_buf_stride = draw_buf_stride ? draw_buf_stride : min_draw_buf_stride;
    assert(draw_buf_stride >= min_draw_buf_stride);
@@ -5707,7 +5728,7 @@ dzn_CmdDrawIndexed(VkCommandBuffer commandBuffer,
       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
 
    if (dzn_cmd_buffer_triangle_fan(cmdbuf, pipeline) &&
-       dzn_graphics_pipeline_get_desc_template(pipeline, ib_strip_cut)) {
+       dzn_cmd_buffer_primitive_restart(cmdbuf, pipeline)) {
       /* The indexed+primitive-restart+triangle-fan combination is a mess,
        * since we have to walk the index buffer, skip entries with the
        * special 0xffff/0xffffffff values, and push triangle list indices
@@ -6388,6 +6409,29 @@ dzn_CmdSetStencilOp(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask,
       DZN_SET_DYN_STATE(cmdbuf, stencil_back.depth_fail_op, depthFailOp);
       DZN_SET_DYN_STATE(cmdbuf, stencil_back.compare_op, compareOp);
    }
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetRasterizerDiscardEnable(VkCommandBuffer commandBuffer, VkBool32 rasterizerDiscardEnable)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, rasterizer_discard, !!rasterizerDiscardEnable);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetDepthBiasEnable(VkCommandBuffer commandBuffer, VkBool32 depthBiasEnable)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, depth_bias_enable, !!depthBiasEnable);
+   if (cmdbuf->cmdlist9)
+      cmdbuf->state.dirty |= DZN_CMD_DIRTY_DEPTH_BIAS;
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetPrimitiveRestartEnable(VkCommandBuffer commandBuffer, VkBool32 primitiveRestartEnable)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, primitive_restart, !!primitiveRestartEnable);
 }
 
 VKAPI_ATTR void VKAPI_CALL

@@ -179,6 +179,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .EXT_depth_clip_control                = true,
       .EXT_descriptor_indexing               = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
       .EXT_extended_dynamic_state            = true,
+      .EXT_extended_dynamic_state2           = true,
       .EXT_image_robustness                  = true,
 #if defined(_WIN32)
       .EXT_external_memory_host              = pdev->dev13,
@@ -880,6 +881,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
       .vertexAttributeInstanceRateDivisor = true,
 
       .extendedDynamicState               = true,
+      .extendedDynamicState2              = true,
+      .extendedDynamicState2LogicOp       = false,
+      .extendedDynamicState2PatchControlPoints = false,
       .vertexAttributeInstanceRateZeroDivisor = true,
       .shaderReplicatedComposites         = true,
       .texelBufferAlignment               = true,
