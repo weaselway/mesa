@@ -1350,6 +1350,33 @@ is_int_cube_txd(const nir_tex_instr *tex, const void *)
           (tex->dest_type & (nir_type_int | nir_type_uint));
 }
 
+/* The int cube lowering samples a 2D array, so implicit derivatives would be
+ * taken of the per-face coordinates, which jump at face edges. Use the
+ * derivatives of the direction instead, the txd lowering does the cube math. */
+static bool
+int_cube_implicit_lod_to_txd(nir_builder *b, nir_tex_instr *tex, void *)
+{
+   if ((tex->op != nir_texop_tex && tex->op != nir_texop_txb) || !is_int_cube_txd(tex, NULL))
+      return false;
+
+   b->cursor = nir_before_instr(&tex->instr);
+   nir_def *coord = nir_trim_vector(b, nir_get_tex_src(tex, nir_tex_src_coord), 3);
+   nir_def *ddx = nir_ddx(b, coord);
+   nir_def *ddy = nir_ddy(b, coord);
+   nir_def *bias = nir_steal_tex_src(tex, nir_tex_src_bias);
+   if (bias) {
+      /* log2(rho * 2^bias) = log2(rho) + bias
+       * shortcut: the shader bias is not clamped to MAX_TEXTURE_LOD_BIAS. */
+      nir_def *scale = nir_fexp2(b, bias);
+      ddx = nir_fmul(b, ddx, scale);
+      ddy = nir_fmul(b, ddy, scale);
+   }
+   nir_tex_instr_add_src(tex, nir_tex_src_ddx, ddx);
+   nir_tex_instr_add_src(tex, nir_tex_src_ddy, ddy);
+   tex->op = nir_texop_txd;
+   return true;
+}
+
 static struct d3d12_shader_selector *
 d3d12_create_shader_impl(struct d3d12_context *ctx,
                          struct d3d12_shader_selector *sel,
@@ -1365,6 +1392,8 @@ d3d12_create_shader_impl(struct d3d12_context *ctx,
     * lower integer cube maps to be handled like 2D textures arrays*/
    /* The int cube lowering keeps the 3D gradients of txd, so turn those into
     * txl with the cube LOD math first. */
+   if (nir->info.stage == MESA_SHADER_FRAGMENT)
+      NIR_PASS(_, nir, nir_shader_tex_pass, int_cube_implicit_lod_to_txd, nir_metadata_control_flow, NULL);
    nir_lower_tex_options int_cube_txd = {};
    int_cube_txd.lower_txd_cb = is_int_cube_txd;
    NIR_PASS(_, nir, nir_lower_tex, &int_cube_txd);
