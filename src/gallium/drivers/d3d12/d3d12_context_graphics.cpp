@@ -1308,8 +1308,9 @@ d3d12_set_viewport_states(struct pipe_context *pctx,
       ctx->viewports[start_slot + i].MaxDepth = far_depth;
       ctx->viewport_states[start_slot + i] = state[i];
    }
-   ctx->num_viewports = start_slot + num_viewports;
-   ctx->state_dirty |= D3D12_DIRTY_VIEWPORT;
+   /* Don't shrink: u_blitter restores only slot 0, the other slots stay valid */
+   ctx->num_viewports = MAX2(ctx->num_viewports, start_slot + num_viewports);
+   ctx->state_dirty |= D3D12_DIRTY_VIEWPORT | D3D12_DIRTY_SCISSOR;
 }
 
 
