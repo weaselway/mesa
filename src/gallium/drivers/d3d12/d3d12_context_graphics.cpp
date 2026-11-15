@@ -937,7 +937,10 @@ d3d12_create_sampler_view(struct pipe_context *pctx,
    sampler_view->base.reference.count = 1;
    sampler_view->base.context = pctx;
    sampler_view->mip_levels = state->u.tex.last_level - state->u.tex.first_level + 1;
-   sampler_view->array_size = texture->array_size;
+   /* Layers transitioned at draw time, starting at first_layer */
+   sampler_view->array_size =
+      (texture->target == PIPE_TEXTURE_3D || texture->target == PIPE_BUFFER) ?
+      texture->array_size : state->u.tex.last_layer - state->u.tex.first_layer + 1;
    sampler_view->texture_generation_id = p_atomic_read(&res->generation_id);
 
    struct d3d12_format_info format_info = d3d12_get_format_info(res->overall_format, state->format, state->target);
