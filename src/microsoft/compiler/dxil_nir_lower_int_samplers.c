@@ -523,11 +523,14 @@ lower_sample_to_txf_for_integer_tex_impl(nir_builder *b, nir_instr *instr,
                            DXIL_TEX_WRAP_CLAMP_TO_EDGE,
                            nir_i2f32(b, nir_channel(b, size0, params.ncoord_comp)));
    } else {
-      /* When we emulate a cube map by using a texture array, the coordinates are always
-       * in range, and we don't have to take care of boundary conditions */
+      /* When we emulate a cube map by using a texture array, the coordinates are
+       * in [0, 1], so no wrapping is needed. A coordinate of exactly 1.0 still
+       * lands one texel past the edge, so clamp it. */
       for (unsigned i = 0; i < 3; ++i) {
          params.wrap[i].coords = coord_help[i];
          params.wrap[i].use_border_color = nir_imm_false(b);
+         if (i < params.ncoord_comp)
+            wrap_clamp_to_edge(b, &params.wrap[i], nir_channel(b, params.size, i));
       }
    }
 
