@@ -2628,7 +2628,7 @@ get_atomic_for_load_store(nir_builder *b, nir_intrinsic_instr *intr, unsigned bi
 static bool
 lower_coherent_load_store(nir_builder *b, nir_intrinsic_instr *intr, void *context)
 {
-   if (!nir_intrinsic_has_access(intr) || (nir_intrinsic_access(intr) & ACCESS_COHERENT) == 0)
+   if (!nir_intrinsic_has_access(intr) || (nir_intrinsic_access(intr) & (ACCESS_COHERENT | ACCESS_ATOMIC)) == 0)
       return false;
 
    nir_def *atomic_def = NULL;
