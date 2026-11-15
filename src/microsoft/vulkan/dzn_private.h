@@ -596,8 +596,41 @@ struct dzn_rendering_attachment {
    VkAttachmentStoreOp store_op;
 };
 
+/* Pipeline state that VK_EXT_extended_dynamic_state can make dynamic, as
+ * Vulkan values. */
+struct dzn_graphics_pipeline_dyn_state {
+   uint8_t cull_mode;
+   uint8_t front_face;
+   uint8_t depth_test;
+   uint8_t depth_write;
+   uint8_t depth_compare_op;
+   uint8_t depth_bounds_test;
+   uint8_t stencil_test;
+   struct {
+      uint8_t fail_op, pass_op, depth_fail_op, compare_op;
+   } stencil_front, stencil_back;
+};
+
+enum dzn_dyn_state_bits {
+   DZN_DYN_CULL_MODE = BITFIELD_BIT(0),
+   DZN_DYN_FRONT_FACE = BITFIELD_BIT(1),
+   DZN_DYN_DEPTH_TEST = BITFIELD_BIT(2),
+   DZN_DYN_DEPTH_WRITE = BITFIELD_BIT(3),
+   DZN_DYN_DEPTH_COMPARE_OP = BITFIELD_BIT(4),
+   DZN_DYN_DEPTH_BOUNDS_TEST = BITFIELD_BIT(5),
+   DZN_DYN_STENCIL_TEST = BITFIELD_BIT(6),
+   DZN_DYN_STENCIL_OP = BITFIELD_BIT(7),
+   DZN_DYN_PRIMITIVE_TOPOLOGY = BITFIELD_BIT(8),
+   DZN_DYN_VERTEX_STRIDE = BITFIELD_BIT(9),
+};
+
+#define DZN_DYN_ZSA_BITS (DZN_DYN_DEPTH_TEST | DZN_DYN_DEPTH_WRITE | \
+                          DZN_DYN_DEPTH_COMPARE_OP | DZN_DYN_DEPTH_BOUNDS_TEST | \
+                          DZN_DYN_STENCIL_TEST | DZN_DYN_STENCIL_OP)
+
 struct dzn_graphics_pipeline_variant_key {
    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE ib_strip_cut;
+   struct dzn_graphics_pipeline_dyn_state dyn;
    struct {
       int constant_factor;
       float slope_factor;
@@ -621,6 +654,8 @@ struct dzn_cmd_buffer_state {
    const struct dzn_pipeline *pipeline;
    struct dzn_descriptor_heap *heaps[NUM_POOL_TYPES];
    struct dzn_graphics_pipeline_variant_key pipeline_variant;
+   VkPrimitiveTopology topology;
+   uint32_t viewport_count, scissor_count;
    struct {
       VkRenderingFlags flags;
       D3D12_RECT area;
@@ -980,19 +1015,31 @@ struct dzn_graphics_pipeline {
    struct {
       bool triangle_fan;
       D3D_PRIMITIVE_TOPOLOGY topology;
+      uint32_t patch_control_points;
    } ia;
 
    struct {
       unsigned count;
       bool dynamic;
+      bool dynamic_count;
       D3D12_VIEWPORT desc[MAX_VP];
    } vp;
 
    struct {
       unsigned count;
       bool dynamic;
+      bool dynamic_count;
       D3D12_RECT desc[MAX_SCISSOR];
    } scissor;
+
+   /* VK_EXT_extended_dynamic_state: DZN_DYN_* bits of the dynamic states, and
+    * the static values the variants start from. */
+   struct {
+      uint32_t mask;
+      struct dzn_graphics_pipeline_dyn_state state;
+      uint32_t compare_mask[2], write_mask[2];
+      bool has_depth, has_stencil, draws_polygons;
+   } dyn;
 
    struct {
       struct {
@@ -1255,6 +1302,9 @@ DXGI_FORMAT dzn_get_typeless_dxgi_format(DXGI_FORMAT in);
 D3D12_FILTER dzn_translate_sampler_filter(const struct dzn_physical_device *pdev,
                                           const VkSamplerCreateInfo *create_info);
 D3D12_COMPARISON_FUNC dzn_translate_compare_op(VkCompareOp in);
+D3D12_PRIMITIVE_TOPOLOGY dzn_translate_prim_topology(VkPrimitiveTopology in,
+                                                     unsigned patch_control_points,
+                                                     bool support_triangle_fan);
 void dzn_translate_viewport(D3D12_VIEWPORT *out, const VkViewport *in);
 void dzn_translate_rect(D3D12_RECT *out, const VkRect2D *in);
 

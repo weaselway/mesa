@@ -188,6 +188,36 @@ dzn_graphics_pipeline_prepare_for_variants(struct dzn_device *device,
    return VK_SUCCESS;
 }
 
+static uint32_t
+dzn_dyn_state_bit(VkDynamicState state)
+{
+   switch (state) {
+   case VK_DYNAMIC_STATE_CULL_MODE: return DZN_DYN_CULL_MODE;
+   case VK_DYNAMIC_STATE_FRONT_FACE: return DZN_DYN_FRONT_FACE;
+   case VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE: return DZN_DYN_DEPTH_TEST;
+   case VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE: return DZN_DYN_DEPTH_WRITE;
+   case VK_DYNAMIC_STATE_DEPTH_COMPARE_OP: return DZN_DYN_DEPTH_COMPARE_OP;
+   case VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE: return DZN_DYN_DEPTH_BOUNDS_TEST;
+   case VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE: return DZN_DYN_STENCIL_TEST;
+   case VK_DYNAMIC_STATE_STENCIL_OP: return DZN_DYN_STENCIL_OP;
+   default: return 0;
+   }
+}
+
+static bool
+dzn_graphics_pipeline_has_dynamic_state(const VkGraphicsPipelineCreateInfo *info,
+                                        VkDynamicState state)
+{
+   if (!info->pDynamicState)
+      return false;
+
+   for (uint32_t i = 0; i < info->pDynamicState->dynamicStateCount; i++) {
+      if (info->pDynamicState->pDynamicStates[i] == state)
+         return true;
+   }
+   return false;
+}
+
 static dxil_spirv_shader_stage
 to_dxil_shader_stage(VkShaderStageFlagBits in)
 {
@@ -765,12 +795,8 @@ dzn_graphics_pipeline_hash_attribs(D3D12_INPUT_ELEMENT_DESC *attribs,
 
 /* Culling only applies to polygons, FRONT_AND_BACK still draws points and lines. */
 static bool
-dzn_graphics_pipeline_culls_everything(const VkGraphicsPipelineCreateInfo *info)
+dzn_graphics_pipeline_draws_polygons(const VkGraphicsPipelineCreateInfo *info)
 {
-   if (!info->pRasterizationState ||
-       info->pRasterizationState->cullMode != VK_CULL_MODE_FRONT_AND_BACK)
-      return false;
-
    /* shortcut: the output primitive of geometry and tessellation shaders is
     * not checked, upgrade when a test or app draws points or lines with them.
     */
@@ -790,6 +816,18 @@ dzn_graphics_pipeline_culls_everything(const VkGraphicsPipelineCreateInfo *info)
    default:
       return true;
    }
+}
+
+static bool
+dzn_graphics_pipeline_culls_everything(const VkGraphicsPipelineCreateInfo *info)
+{
+   /* With a dynamic cull mode, variants turn rasterization off instead. */
+   if (!info->pRasterizationState ||
+       info->pRasterizationState->cullMode != VK_CULL_MODE_FRONT_AND_BACK ||
+       dzn_graphics_pipeline_has_dynamic_state(info, VK_DYNAMIC_STATE_CULL_MODE))
+      return false;
+
+   return dzn_graphics_pipeline_draws_polygons(info);
 }
 
 static VkResult
@@ -1269,8 +1307,8 @@ to_prim_topology_type(VkPrimitiveTopology in)
    }
 }
 
-static D3D12_PRIMITIVE_TOPOLOGY
-to_prim_topology(VkPrimitiveTopology in, unsigned patch_control_points, bool support_triangle_fan)
+D3D12_PRIMITIVE_TOPOLOGY
+dzn_translate_prim_topology(VkPrimitiveTopology in, unsigned patch_control_points, bool support_triangle_fan)
 {
    switch (in) {
    case VK_PRIMITIVE_TOPOLOGY_POINT_LIST: return D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
@@ -1317,9 +1355,10 @@ dzn_graphics_pipeline_translate_ia(struct dzn_device *device,
    d3d12_gfx_pipeline_state_stream_new_desc(out, PRIMITIVE_TOPOLOGY, D3D12_PRIMITIVE_TOPOLOGY_TYPE, prim_top_type);
    *prim_top_type = to_prim_topology_type(in_ia->topology);
    pipeline->ia.triangle_fan = in_ia->topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN && !pdev->options15.TriangleFanSupported;
+   pipeline->ia.patch_control_points = in_tes ? in_tes->patchControlPoints : 0;
    pipeline->ia.topology =
-      to_prim_topology(in_ia->topology, in_tes ? in_tes->patchControlPoints : 0,
-                       pdev->options15.TriangleFanSupported);
+      dzn_translate_prim_topology(in_ia->topology, pipeline->ia.patch_control_points,
+                                  pdev->options15.TriangleFanSupported);
 
    if (in_ia->primitiveRestartEnable) {
       d3d12_gfx_pipeline_state_stream_new_desc(out, IB_STRIP_CUT_VALUE, D3D12_INDEX_BUFFER_STRIP_CUT_VALUE, ib_strip_cut);
@@ -1382,6 +1421,10 @@ dzn_graphics_pipeline_translate_rast(struct dzn_device *device,
       in_rast->rasterizerDiscardEnable ? NULL : in->pViewportState;
    const VkPipelineMultisampleStateCreateInfo *in_ms =
       in_rast->rasterizerDiscardEnable ? NULL : in->pMultisampleState;
+
+   pipeline->dyn.state.cull_mode = in_rast->cullMode;
+   pipeline->dyn.state.front_face = in_rast->frontFace;
+   pipeline->dyn.draws_polygons = dzn_graphics_pipeline_draws_polygons(in);
 
    if (in_vp) {
       pipeline->vp.count = in_vp->viewportCount;
@@ -1604,6 +1647,29 @@ dzn_graphics_pipeline_translate_zsa(struct dzn_device *device,
    bool has_no_depth = ri && ri->depthAttachmentFormat == VK_FORMAT_UNDEFINED;
    bool has_no_stencil = ri && ri->stencilAttachmentFormat == VK_FORMAT_UNDEFINED;
 
+   pipeline->dyn.has_depth = !has_no_depth;
+   pipeline->dyn.has_stencil = !has_no_stencil;
+   pipeline->dyn.state.depth_test = in_zsa->depthTestEnable;
+   pipeline->dyn.state.depth_write = in_zsa->depthWriteEnable;
+   pipeline->dyn.state.depth_compare_op = in_zsa->depthCompareOp;
+   pipeline->dyn.state.depth_bounds_test = in_zsa->depthBoundsTestEnable;
+   pipeline->dyn.state.stencil_test = in_zsa->stencilTestEnable;
+   pipeline->dyn.state.stencil_front.fail_op = in_zsa->front.failOp;
+   pipeline->dyn.state.stencil_front.pass_op = in_zsa->front.passOp;
+   pipeline->dyn.state.stencil_front.depth_fail_op = in_zsa->front.depthFailOp;
+   pipeline->dyn.state.stencil_front.compare_op = in_zsa->front.compareOp;
+   pipeline->dyn.state.stencil_back.fail_op = in_zsa->back.failOp;
+   pipeline->dyn.state.stencil_back.pass_op = in_zsa->back.passOp;
+   pipeline->dyn.state.stencil_back.depth_fail_op = in_zsa->back.depthFailOp;
+   pipeline->dyn.state.stencil_back.compare_op = in_zsa->back.compareOp;
+   pipeline->dyn.compare_mask[0] = in_zsa->front.compareMask;
+   pipeline->dyn.compare_mask[1] = in_zsa->back.compareMask;
+   pipeline->dyn.write_mask[0] = in_zsa->front.writeMask;
+   pipeline->dyn.write_mask[1] = in_zsa->back.writeMask;
+   /* Static references and bounds are applied at bind time when the test may be on. */
+   if (pipeline->dyn.mask & DZN_DYN_STENCIL_TEST)
+      pipeline->zsa.stencil_test.enable = true;
+
    desc.DepthEnable = !has_no_depth &&
       (in_zsa->depthTestEnable || in_zsa->depthBoundsTestEnable);
    if (desc.DepthEnable) {
@@ -1615,7 +1681,8 @@ dzn_graphics_pipeline_translate_zsa(struct dzn_device *device,
          dzn_translate_compare_op(in_zsa->depthCompareOp) :
          D3D12_COMPARISON_FUNC_ALWAYS;
    }
-   pipeline->zsa.depth_bounds.enable = in_zsa->depthBoundsTestEnable;
+   pipeline->zsa.depth_bounds.enable = in_zsa->depthBoundsTestEnable ||
+                                       (pipeline->dyn.mask & DZN_DYN_DEPTH_BOUNDS_TEST);
    pipeline->zsa.depth_bounds.min = in_zsa->minDepthBounds;
    pipeline->zsa.depth_bounds.max = in_zsa->maxDepthBounds;
    desc.DepthBoundsTestEnable = in_zsa->depthBoundsTestEnable;
@@ -1633,6 +1700,16 @@ dzn_graphics_pipeline_translate_zsa(struct dzn_device *device,
       pipeline->zsa.stencil_test.enable = true;
 
       translate_stencil_test(pipeline, &desc, in);
+   }
+
+   /* shortcut: without independent front/back stencil references, variants
+    * with dynamic depth/stencil state always use the front reference. Upgrade
+    * if a device without IndependentFrontAndBackStencilRefMaskSupported needs
+    * a back-face-only reference.
+    */
+   if (pipeline->dyn.mask & (DZN_DYN_ZSA_BITS | DZN_DYN_CULL_MODE)) {
+      pipeline->zsa.stencil_test.front.uses_ref = true;
+      pipeline->zsa.stencil_test.back.uses_ref = false;
    }
 
    if (pdev->options14.IndependentFrontAndBackStencilRefMaskSupported) {
@@ -2017,6 +2094,31 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
          case VK_DYNAMIC_STATE_LINE_WIDTH:
             /* Nothing to do since we just support lineWidth = 1. */
             break;
+         case VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT:
+            pipeline->vp.dynamic = pipeline->vp.dynamic_count = true;
+            break;
+         case VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT:
+            pipeline->scissor.dynamic = pipeline->scissor.dynamic_count = true;
+            break;
+         case VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY:
+            pipeline->dyn.mask |= DZN_DYN_PRIMITIVE_TOPOLOGY;
+            break;
+         case VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE:
+            pipeline->dyn.mask |= DZN_DYN_VERTEX_STRIDE;
+            break;
+         case VK_DYNAMIC_STATE_CULL_MODE:
+         case VK_DYNAMIC_STATE_FRONT_FACE:
+         case VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE:
+         case VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE:
+         case VK_DYNAMIC_STATE_DEPTH_COMPARE_OP:
+         case VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE:
+         case VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE:
+         case VK_DYNAMIC_STATE_STENCIL_OP:
+            pipeline->dyn.mask |= dzn_dyn_state_bit(pCreateInfo->pDynamicState->pDynamicStates[i]);
+            ret = dzn_graphics_pipeline_prepare_for_variants(device, pipeline);
+            if (ret)
+               goto out;
+            break;
          default: UNREACHABLE("Unsupported dynamic state");
          }
       }
@@ -2260,6 +2362,117 @@ update_stencil_state(struct dzn_physical_device *pdev,
    }
 }
 
+static void
+copy_dyn_state(uint32_t mask,
+               const struct dzn_graphics_pipeline_dyn_state *src,
+               struct dzn_graphics_pipeline_dyn_state *dst)
+{
+   if (mask & DZN_DYN_CULL_MODE)
+      dst->cull_mode = src->cull_mode;
+   if (mask & DZN_DYN_FRONT_FACE)
+      dst->front_face = src->front_face;
+   if (mask & DZN_DYN_DEPTH_TEST)
+      dst->depth_test = src->depth_test;
+   if (mask & DZN_DYN_DEPTH_WRITE)
+      dst->depth_write = src->depth_write;
+   if (mask & DZN_DYN_DEPTH_COMPARE_OP)
+      dst->depth_compare_op = src->depth_compare_op;
+   if (mask & DZN_DYN_DEPTH_BOUNDS_TEST)
+      dst->depth_bounds_test = src->depth_bounds_test;
+   if (mask & DZN_DYN_STENCIL_TEST)
+      dst->stencil_test = src->stencil_test;
+   if (mask & DZN_DYN_STENCIL_OP) {
+      dst->stencil_front = src->stencil_front;
+      dst->stencil_back = src->stencil_back;
+   }
+}
+
+/* Rebuilds the depth/stencil desc of a pipeline with dynamic depth/stencil
+ * state or cull mode from the merged Vulkan state.
+ */
+static void
+update_dyn_zsa_state(struct dzn_physical_device *pdev,
+                     struct dzn_graphics_pipeline *pipeline,
+                     uintptr_t *stream_buf,
+                     const struct dzn_graphics_pipeline_dyn_state *state,
+                     const struct dzn_graphics_pipeline_variant_key *key,
+                     bool rast_off)
+{
+   D3D12_DEPTH_STENCIL_DESC2 desc = { 0 };
+
+   if (!rast_off) {
+      desc.DepthEnable = pipeline->dyn.has_depth &&
+                         (state->depth_test || state->depth_bounds_test);
+      desc.DepthBoundsTestEnable = state->depth_bounds_test;
+      desc.StencilEnable = pipeline->dyn.has_stencil && state->stencil_test;
+   }
+
+   if (desc.DepthEnable) {
+      desc.DepthWriteMask = state->depth_write ?
+         D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+      desc.DepthFunc = state->depth_test ?
+         dzn_translate_compare_op(state->depth_compare_op) :
+         D3D12_COMPARISON_FUNC_ALWAYS;
+   }
+
+   if (desc.StencilEnable) {
+      desc.FrontFace.StencilFailOp = translate_stencil_op(state->stencil_front.fail_op);
+      desc.FrontFace.StencilDepthFailOp = translate_stencil_op(state->stencil_front.depth_fail_op);
+      desc.FrontFace.StencilPassOp = translate_stencil_op(state->stencil_front.pass_op);
+      desc.FrontFace.StencilFunc = dzn_translate_compare_op(state->stencil_front.compare_op);
+      desc.BackFace.StencilFailOp = translate_stencil_op(state->stencil_back.fail_op);
+      desc.BackFace.StencilDepthFailOp = translate_stencil_op(state->stencil_back.depth_fail_op);
+      desc.BackFace.StencilPassOp = translate_stencil_op(state->stencil_back.pass_op);
+      desc.BackFace.StencilFunc = dzn_translate_compare_op(state->stencil_back.compare_op);
+
+      desc.FrontFace.StencilReadMask = pipeline->zsa.stencil_test.dynamic_compare_mask ?
+         key->stencil_test.front.compare_mask : pipeline->dyn.compare_mask[0];
+      desc.BackFace.StencilReadMask = pipeline->zsa.stencil_test.dynamic_compare_mask ?
+         key->stencil_test.back.compare_mask : pipeline->dyn.compare_mask[1];
+      desc.FrontFace.StencilWriteMask = pipeline->zsa.stencil_test.dynamic_write_mask ?
+         key->stencil_test.front.write_mask : pipeline->dyn.write_mask[0];
+      desc.BackFace.StencilWriteMask = pipeline->zsa.stencil_test.dynamic_write_mask ?
+         key->stencil_test.back.write_mask : pipeline->dyn.write_mask[1];
+   }
+
+   if (pdev->options14.IndependentFrontAndBackStencilRefMaskSupported) {
+      D3D12_DEPTH_STENCIL_DESC2 *ds =
+         dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
+      if (ds)
+         *ds = desc;
+      return;
+   }
+
+   D3D12_DEPTH_STENCIL_DESC1 *ds =
+      dzn_graphics_pipeline_get_desc(pipeline, stream_buf, ds);
+   if (!ds)
+      return;
+
+   /* One mask for both faces, use the back one when front faces are culled. */
+   bool use_back = state->cull_mode & VK_CULL_MODE_FRONT_BIT;
+   *ds = (D3D12_DEPTH_STENCIL_DESC1) {
+      .DepthEnable = desc.DepthEnable,
+      .DepthWriteMask = desc.DepthWriteMask,
+      .DepthFunc = desc.DepthFunc,
+      .StencilEnable = desc.StencilEnable,
+      .StencilReadMask = use_back ? desc.BackFace.StencilReadMask : desc.FrontFace.StencilReadMask,
+      .StencilWriteMask = use_back ? desc.BackFace.StencilWriteMask : desc.FrontFace.StencilWriteMask,
+      .FrontFace = {
+         .StencilFailOp = desc.FrontFace.StencilFailOp,
+         .StencilDepthFailOp = desc.FrontFace.StencilDepthFailOp,
+         .StencilPassOp = desc.FrontFace.StencilPassOp,
+         .StencilFunc = desc.FrontFace.StencilFunc,
+      },
+      .BackFace = {
+         .StencilFailOp = desc.BackFace.StencilFailOp,
+         .StencilDepthFailOp = desc.BackFace.StencilDepthFailOp,
+         .StencilPassOp = desc.BackFace.StencilPassOp,
+         .StencilFunc = desc.BackFace.StencilFunc,
+      },
+      .DepthBoundsTestEnable = desc.DepthBoundsTestEnable,
+   };
+}
+
 ID3D12PipelineState *
 dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
                                 const struct dzn_graphics_pipeline_variant_key *key)
@@ -2282,7 +2495,20 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
        pipeline->zsa.dynamic_depth_bias)
       masked_key.depth_bias = key->depth_bias;
 
-   mask_key_for_stencil_state(pdev, pipeline, key, &masked_key);
+   bool dyn_zsa = pipeline->dyn.mask & (DZN_DYN_ZSA_BITS | DZN_DYN_CULL_MODE);
+   copy_dyn_state(pipeline->dyn.mask, &key->dyn, &masked_key.dyn);
+   if (dyn_zsa) {
+      if (pipeline->zsa.stencil_test.dynamic_compare_mask) {
+         masked_key.stencil_test.front.compare_mask = key->stencil_test.front.compare_mask;
+         masked_key.stencil_test.back.compare_mask = key->stencil_test.back.compare_mask;
+      }
+      if (pipeline->zsa.stencil_test.dynamic_write_mask) {
+         masked_key.stencil_test.front.write_mask = key->stencil_test.front.write_mask;
+         masked_key.stencil_test.back.write_mask = key->stencil_test.back.write_mask;
+      }
+   } else {
+      mask_key_for_stencil_state(pdev, pipeline, key, &masked_key);
+   }
 
    struct hash_entry *he =
       _mesa_hash_table_search(pipeline->variants, &masked_key);
@@ -2314,7 +2540,32 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
          rast->SlopeScaledDepthBias = masked_key.depth_bias.slope_factor;
       }
 
-      update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
+      struct dzn_graphics_pipeline_dyn_state state = pipeline->dyn.state;
+      copy_dyn_state(pipeline->dyn.mask, &masked_key.dyn, &state);
+
+      if (rast && (pipeline->dyn.mask & (DZN_DYN_CULL_MODE | DZN_DYN_FRONT_FACE))) {
+         /* CullMode and FrontCounterClockwise are at the same place in all
+          * rasterizer desc versions. */
+         rast->CullMode = translate_cull_mode(state.cull_mode);
+         rast->FrontCounterClockwise = state.front_face == VK_FRONT_FACE_COUNTER_CLOCKWISE;
+      }
+
+      /* D3D12 can't cull front and back faces, turn rasterization off. */
+      bool rast_off = pipeline->rast_disabled_from_missing_position ||
+         ((pipeline->dyn.mask & DZN_DYN_CULL_MODE) &&
+          state.cull_mode == VK_CULL_MODE_FRONT_AND_BACK &&
+          pipeline->dyn.draws_polygons);
+
+      if (dyn_zsa)
+         update_dyn_zsa_state(pdev, pipeline, stream_buf, &state, &masked_key, rast_off);
+      else
+         update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
+
+      if (rast_off && pipeline->templates.shaders[MESA_SHADER_FRAGMENT].bc) {
+         uintptr_t ps_offset = (uintptr_t)pipeline->templates.shaders[MESA_SHADER_FRAGMENT].bc -
+                               (uintptr_t)pipeline->templates.stream_buf;
+         *(D3D12_SHADER_BYTECODE *)((uint8_t *)stream_buf + ps_offset) = (D3D12_SHADER_BYTECODE){ 0 };
+      }
 
       ASSERTED HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
                                                                 &IID_ID3D12PipelineState,
