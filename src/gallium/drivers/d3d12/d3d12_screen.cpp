@@ -445,9 +445,12 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
    /* Subtract one so that implicit position can be added */
    caps->max_varyings = D3D12_PS_INPUT_REGISTER_COUNT - 1;
 
+   /* Only tier 1 on feature level 11_0 is limited to 8 UAVs, tier 3 has no limit */
    caps->max_combined_shader_output_resources =
-      screen->max_feature_level <= D3D_FEATURE_LEVEL_11_0 ? D3D12_PS_CS_UAV_REGISTER_COUNT :
-      (screen->opts.ResourceBindingTier <= D3D12_RESOURCE_BINDING_TIER_2 ? D3D12_UAV_SLOT_COUNT : 0);
+      screen->opts.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3 ? 0 :
+      (screen->opts.ResourceBindingTier == D3D12_RESOURCE_BINDING_TIER_1 &&
+       screen->max_feature_level <= D3D_FEATURE_LEVEL_11_0) ? D3D12_PS_CS_UAV_REGISTER_COUNT :
+      D3D12_UAV_SLOT_COUNT;
 
    caps->start_instance = true;
    caps->draw_parameters = true;
