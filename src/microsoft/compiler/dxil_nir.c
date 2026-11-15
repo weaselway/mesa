@@ -866,7 +866,8 @@ dxil_nir_split_clip_cull_distance_instr(nir_builder *b,
             return false;
 
          assert(old_length <= 4);
-         unsigned start = (var->data.location - VARYING_SLOT_CLIP_DIST0) * 4;
+         unsigned start = (var->data.location - VARYING_SLOT_CLIP_DIST0) * 4 +
+                          var->data.location_frac;
          unsigned end = start + old_length;
          /* If it doesn't straddle the clip array size, then it's either just clip or cull, not both. */
          if (start >= b->shader->info.clip_distance_array_size ||
@@ -889,7 +890,7 @@ dxil_nir_split_clip_cull_distance_instr(nir_builder *b,
       }
 
       if (is_clip_cull_split) {
-         new_var->data.location_frac = old_length;
+         new_var->data.location_frac = var->data.location_frac + old_length;
       } else {
          new_var->data.location++;
          new_var->data.location_frac = 0;
@@ -935,16 +936,25 @@ dxil_nir_split_clip_cull_distance_instr(nir_builder *b,
 bool
 dxil_nir_split_clip_cull_distance(nir_shader *shader)
 {
-   struct dxil_nir_split_clip_cull_distance_params params = {
-      .new_var = { NULL, NULL },
-      .shader = shader,
-   };
-   nir_shader_instructions_pass(shader,
-                                dxil_nir_split_clip_cull_distance_instr,
-                                nir_metadata_control_flow |
-                                nir_metadata_loop_analysis,
-                                &params);
-   return params.new_var[0] != NULL || params.new_var[1] != NULL;
+   /* Each run splits off at most one variable per mode, but a merged
+    * float[8] can need a split at the row boundary and another at the
+    * clip/cull boundary (e.g. 1 clip + 7 cull), so repeat until stable.
+    */
+   bool progress = false;
+   for (;;) {
+      struct dxil_nir_split_clip_cull_distance_params params = {
+         .new_var = { NULL, NULL },
+         .shader = shader,
+      };
+      nir_shader_instructions_pass(shader,
+                                   dxil_nir_split_clip_cull_distance_instr,
+                                   nir_metadata_control_flow |
+                                   nir_metadata_loop_analysis,
+                                   &params);
+      if (params.new_var[0] == NULL && params.new_var[1] == NULL)
+         return progress;
+      progress = true;
+   }
 }
 
 static bool
