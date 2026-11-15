@@ -429,6 +429,7 @@ enum dzn_cmd_dirty {
 #define MAX_DYNAMIC_BUFFERS                                                  \
    (MAX_DYNAMIC_UNIFORM_BUFFERS + MAX_DYNAMIC_STORAGE_BUFFERS)
 #define MAX_PUSH_CONSTANT_DWORDS 32
+#define MAX_INLINE_UNIFORM_BLOCK_SIZE 4096
 
 #define NUM_BIND_POINT VK_PIPELINE_BIND_POINT_COMPUTE + 1
 
@@ -800,6 +801,14 @@ struct dzn_descriptor_pool {
    uint32_t desc_count[NUM_POOL_TYPES];
    uint32_t used_desc_count[NUM_POOL_TYPES];
    uint32_t free_offset[NUM_POOL_TYPES];
+
+   /* Host-visible backing store for inline uniform blocks, bound as CBVs. */
+   struct {
+      VkBuffer buf;
+      VkDeviceMemory mem;
+      uint8_t *map;
+      uint32_t size, used, free_offset;
+   } inline_data;
 };
 
 #define MAX_SHADER_VISIBILITIES (D3D12_SHADER_VISIBILITY_PIXEL + 1)
@@ -820,6 +829,9 @@ struct dzn_descriptor_set_layout_binding {
       uint32_t buffer_idx;
    };
    bool variable_size;
+   /* Inline uniform blocks: byte offset in the set's inline data, and size.
+    * They use one CBV descriptor, inline_size is 0 for other types. */
+   uint32_t inline_offset, inline_size;
 };
 
 struct dzn_descriptor_set_layout {
@@ -848,6 +860,8 @@ struct dzn_descriptor_set_layout {
    } dynamic_buffers;
    uint32_t buffer_count;
    uint32_t stages;
+   /* Bytes of inline uniform block data, each block aligned to 256 */
+   uint32_t inline_data_size;
 
    uint32_t binding_count;
    const struct dzn_descriptor_set_layout_binding *bindings;
@@ -863,6 +877,8 @@ struct dzn_descriptor_set {
    uint32_t heap_sizes[NUM_POOL_TYPES];
    /* Layout (and pool) is null for a freed descriptor set */
    const struct dzn_descriptor_set_layout *layout;
+   /* Inline uniform block data in the pool's inline_data buffer */
+   uint32_t inline_offset, inline_size;
 };
 
 struct dzn_pipeline_layout_set {
