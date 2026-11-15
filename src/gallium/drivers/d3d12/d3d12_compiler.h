@@ -237,6 +237,7 @@ struct d3d12_gs_variant_key
          unsigned front_ccw:1;
          unsigned edge_flag_fix:1;
          unsigned flatshade_first:1;
+         unsigned passthrough_vertices:2; /* vertices per primitive, 0 = 1 */
       };
       uint64_t all;
    };

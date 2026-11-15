@@ -26,6 +26,7 @@
 #include "d3d12_debug.h"
 #include "d3d12_screen.h"
 #include "d3d12_nir_passes.h"
+#include "d3d12_query.h"
 #include "nir_to_dxil.h"
 #include "dxil_nir.h"
 #include "dxil_nir_lower_int_cubemaps.h"
@@ -216,6 +217,7 @@ compile_nir(struct d3d12_context *ctx, struct d3d12_shader_selector *sel,
 struct d3d12_selection_context {
    struct d3d12_context *ctx;
    bool needs_point_sprite_lowering;
+   bool needs_tess_primitive_count;
    bool needs_vertex_reordering;
    unsigned provoking_vertex;
    bool alternate_tri;
@@ -629,7 +631,8 @@ validate_geometry_shader_variant(struct d3d12_selection_context *sel_ctx)
    if (gs != NULL && !gs->is_variant)
       return;
 
-   d3d12_shader_selector* vs = ctx->gfx_stages[MESA_SHADER_VERTEX];
+   d3d12_shader_selector* tes = ctx->gfx_stages[MESA_SHADER_TESS_EVAL];
+   d3d12_shader_selector* prev = tes ? tes : ctx->gfx_stages[MESA_SHADER_VERTEX];
    d3d12_shader_selector* fs = ctx->gfx_stages[MESA_SHADER_FRAGMENT];
 
    struct d3d12_gs_variant_key key;
@@ -653,13 +656,18 @@ validate_geometry_shader_variant(struct d3d12_selection_context *sel_ctx)
       /* TODO support cases where flat shading (pv != 0) and xfb are enabled, or lines */
       key.provoking_vertex = sel_ctx->provoking_vertex;
       key.alternate_tri = sel_ctx->alternate_tri;
+   } else if (sel_ctx->needs_tess_primitive_count) {
+      key.passthrough = true;
+      if (!tes->initial->info.tess.point_mode)
+         key.passthrough_vertices =
+            tes->initial->info.tess._primitive_mode == TESS_PRIMITIVE_ISOLINES ? 2 : 3;
    }
 
-   if (vs->initial_output_vars == nullptr) {
-      vs->initial_output_vars = fill_varyings(sel_ctx->ctx, vs->initial, nir_var_shader_out,
-                                                vs->initial->info.outputs_written, false);
+   if (prev->initial_output_vars == nullptr) {
+      prev->initial_output_vars = fill_varyings(sel_ctx->ctx, prev->initial, nir_var_shader_out,
+                                                prev->initial->info.outputs_written, false);
    }
-   key.varyings = vs->initial_output_vars;
+   key.varyings = prev->initial_output_vars;
    gs = d3d12_get_gs_variant(ctx, &key);
    ctx->gfx_stages[MESA_SHADER_GEOMETRY] = gs;
 }
@@ -1555,10 +1563,12 @@ d3d12_select_shader_variants(struct d3d12_context *ctx, const struct pipe_draw_i
    sel_ctx.missing_dual_src_outputs = ctx->missing_dual_src_outputs;
    sel_ctx.frag_result_color_lowering = frag_result_color_lowering(ctx);
    sel_ctx.manual_depth_range = ctx->manual_depth_range;
+   sel_ctx.needs_tess_primitive_count = d3d12_needs_tess_primitive_count(ctx);
 
    d3d12_shader_selector* gs = ctx->gfx_stages[MESA_SHADER_GEOMETRY];
    if (gs == nullptr || gs->is_variant) {
-      if (sel_ctx.fill_mode_lowered != PIPE_POLYGON_MODE_FILL || sel_ctx.needs_point_sprite_lowering || sel_ctx.needs_vertex_reordering)
+      if (sel_ctx.fill_mode_lowered != PIPE_POLYGON_MODE_FILL || sel_ctx.needs_point_sprite_lowering || sel_ctx.needs_vertex_reordering ||
+          sel_ctx.needs_tess_primitive_count)
          validate_geometry_shader_variant(&sel_ctx);
       else if (gs != nullptr) {
          ctx->gfx_stages[MESA_SHADER_GEOMETRY] = NULL;
