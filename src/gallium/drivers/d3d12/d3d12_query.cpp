@@ -41,7 +41,7 @@ num_sub_queries(unsigned query_type, unsigned index)
 {
    switch (query_type) {
    case PIPE_QUERY_PRIMITIVES_GENERATED:
-      return index == 0 ? 3 : 1;
+      return index == 0 ? 4 : 1;
    case PIPE_QUERY_SO_OVERFLOW_ANY_PREDICATE:
       return 4;
    default:
@@ -300,6 +300,10 @@ accumulate_result_cpu(struct d3d12_context *ctx, struct d3d12_query *q,
          if (!accumulate_subresult_cpu(ctx, q, 2, &local_result))
             return false;
          result->u64 += local_result.pipeline_statistics.ia_primitives;
+
+         if (!accumulate_subresult_cpu(ctx, q, 3, &local_result))
+            return false;
+         result->u64 += local_result.pipeline_statistics.c_invocations;
       }
       return true;
    case PIPE_QUERY_PRIMITIVES_EMITTED:
@@ -329,10 +333,16 @@ subquery_should_be_active(struct d3d12_context *ctx, struct d3d12_query *q, unsi
       bool has_xfb = !!ctx->gfx_pipeline_state.num_so_targets;
       struct d3d12_shader_selector *gs = ctx->gfx_stages[MESA_SHADER_GEOMETRY];
       bool has_gs = gs && !gs->is_variant;
+      /* IAPrimitives counts patches, not the tessellated primitives. CInvocations
+       * does, but stays 0 with rasterizer discard (no rasterized stream).
+       * shortcut: tess + discard + no xfb still counts patches, fix with a dummy SO decl if needed */
+      bool has_tess = ctx->gfx_stages[MESA_SHADER_TESS_EVAL] &&
+                      !(ctx->gfx_pipeline_state.rast && ctx->gfx_pipeline_state.rast->base.rasterizer_discard);
       switch (sub_query) {
       case 0: return has_xfb;
       case 1: return !has_xfb && has_gs;
-      case 2: return !has_xfb && !has_gs;
+      case 2: return !has_xfb && !has_gs && !has_tess;
+      case 3: return !has_xfb && !has_gs && has_tess;
       default: UNREACHABLE("Invalid subquery for primitives generated");
       }
       break;
