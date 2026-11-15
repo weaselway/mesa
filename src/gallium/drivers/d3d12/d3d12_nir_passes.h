@@ -92,7 +92,7 @@ bool
 d3d12_lower_primitive_id(nir_shader *shader);
 
 void
-d3d12_clamp_gs_vertices_out(nir_shader *shader);
+d3d12_split_gs_instances(nir_shader *shader, unsigned prim_vertices);
 
 bool
 d3d12_lower_triangle_strip(nir_shader *shader);

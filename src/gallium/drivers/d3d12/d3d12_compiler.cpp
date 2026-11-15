@@ -1109,6 +1109,9 @@ select_shader_variant(struct d3d12_selection_context *sel_ctx, d3d12_shader_sele
 
       if (key.gs.triangle_strip)
          NIR_PASS(_, new_nir_variant, d3d12_lower_triangle_strip);
+
+      if (key.gs.writes_psize || key.gs.triangle_strip)
+         d3d12_split_gs_instances(new_nir_variant, key.gs.writes_psize ? 4 : 3);
    }
    else if (key.stage == MESA_SHADER_FRAGMENT)
    {
