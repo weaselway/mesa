@@ -154,7 +154,6 @@ copy_subregion_no_barriers(struct d3d12_context *ctx,
 {
    UNUSED struct d3d12_screen *screen = d3d12_screen(ctx->base.screen);
    D3D12_TEXTURE_COPY_LOCATION src_loc, dst_loc;
-   unsigned src_z = psrc_box->z;
 
    int src_subres_stride = src->base.b.last_level + 1;
    int dst_subres_stride = dst->base.b.last_level + 1;
@@ -177,7 +176,7 @@ copy_subregion_no_barriers(struct d3d12_context *ctx,
 
    if (src->base.b.format == PIPE_FORMAT_Z24_UNORM_S8_UINT ||
        src->base.b.format == PIPE_FORMAT_S8_UINT_Z24_UNORM ||
-       dst->base.b.format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT) {
+       src->base.b.format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT) {
       stencil_src_res_offset = src_subres_stride * src_array_size;
       dst_nres = 2;
    }
@@ -191,13 +190,18 @@ copy_subregion_no_barriers(struct d3d12_context *ctx,
       if (!(subresource_copy_mask & (1 << subres)))
          continue;
 
+      /* get_subresource_id() folds the layer into the index and zeroes z,
+       * so start from the original values for each plane. */
+      unsigned src_z = psrc_box->z;
+      unsigned dst_z = dstz;
+
       src_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
       src_loc.SubresourceIndex = get_subresource_id(src->base.b.target, src_level, src_subres_stride, src_z, &src_z, src_array_size, src->plane_slice) +
                                  subres * stencil_src_res_offset;
       src_loc.pResource = d3d12_resource_resource(src);
 
       dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-      dst_loc.SubresourceIndex = get_subresource_id(dst->base.b.target, dst_level, dst_subres_stride, dstz, &dstz, dst_array_size, dst->plane_slice) +
+      dst_loc.SubresourceIndex = get_subresource_id(dst->base.b.target, dst_level, dst_subres_stride, dst_z, &dst_z, dst_array_size, dst->plane_slice) +
                                  subres * stencil_dst_res_offset;
       dst_loc.pResource = d3d12_resource_resource(dst);
 
@@ -206,14 +210,14 @@ copy_subregion_no_barriers(struct d3d12_context *ctx,
           psrc_box->height == (int)u_minify(src->base.b.height0, src_level) &&
           psrc_box->depth == (int)u_minify(src->base.b.depth0, src_level)) {
 
-         assert((dstx == 0 && dsty == 0 && dstz == 0) ||
+         assert((dstx == 0 && dsty == 0 && dst_z == 0) ||
                 screen->opts2.ProgrammableSamplePositionsTier !=
                 D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED ||
                 (!util_format_is_depth_or_stencil(dst->base.b.format) &&
                  !util_format_is_depth_or_stencil(src->base.b.format) &&
                   dst->base.b.nr_samples == src->base.b.nr_samples));
 
-         ctx->cmdlist->CopyTextureRegion(&dst_loc, dstx, dsty, dstz,
+         ctx->cmdlist->CopyTextureRegion(&dst_loc, dstx, dsty, dst_z,
                                          &src_loc, NULL);
          ctx->has_commands = true;
 
@@ -232,7 +236,7 @@ copy_subregion_no_barriers(struct d3d12_context *ctx,
                   !util_format_is_depth_or_stencil(src->base.b.format))) &&
                 dst->base.b.nr_samples == src->base.b.nr_samples);
 
-         ctx->cmdlist->CopyTextureRegion(&dst_loc, dstx, dsty, dstz,
+         ctx->cmdlist->CopyTextureRegion(&dst_loc, dstx, dsty, dst_z,
                                          &src_loc, &src_box);
          ctx->has_commands = true;
       }
