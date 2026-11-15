@@ -72,6 +72,8 @@
 #include "util/os_time.h"
 #include "util/u_atomic.h"
 #include "vk_drm_syncobj.h"
+#include "vk_fence.h"
+#include "vk_semaphore.h"
 #include "wsl_dxgdrm.h"
 #include "wsl_eventfd.h"
 #include "wsl_sandbox.h"
@@ -2181,6 +2183,65 @@ dzn_EnumerateInstanceLayerProperties(uint32_t *pPropertyCount,
 }
 
 #ifdef __linux__
+/* With dxgdrm only the syncobj type imports fds, but semaphores and fences
+ * created without export info get a local type. A permanent import replaces
+ * the payload anyway, so turn the local sync into a syncobj in place.
+ */
+static VkResult
+dzn_sync_prepare_fd_import(struct vk_device *device, struct vk_sync *sync)
+{
+   struct dzn_physical_device *pdev =
+      container_of(device->physical, struct dzn_physical_device, vk);
+
+   if (pdev->dxgdrm_fd < 0 ||
+       (sync->type != &pdev->local_sync_type &&
+        sync->type != &pdev->local_binary_type.sync))
+      return VK_SUCCESS;
+
+   /* The object was allocated for the local type, the syncobj must fit. */
+   assert(sync->type->size >= pdev->drm_syncobj_type.size);
+
+   const struct vk_sync_type *old_type = sync->type;
+   enum vk_sync_flags flags = sync->flags;
+   vk_sync_finish(device, sync);
+   VkResult result = vk_sync_init(device, sync, &pdev->drm_syncobj_type, flags, 0);
+   if (result != VK_SUCCESS) {
+      /* Keep a valid payload so destroying the object still works. */
+      VkResult restore = vk_sync_init(device, sync, old_type, flags, 0);
+      assert(restore == VK_SUCCESS);
+      (void)restore;
+   }
+   return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+dzn_ImportSemaphoreFdKHR(VkDevice _device, const VkImportSemaphoreFdInfoKHR *info)
+{
+   VK_FROM_HANDLE(vk_device, device, _device);
+   VK_FROM_HANDLE(vk_semaphore, semaphore, info->semaphore);
+
+   if (!(info->flags & VK_SEMAPHORE_IMPORT_TEMPORARY_BIT)) {
+      VkResult result = dzn_sync_prepare_fd_import(device, &semaphore->permanent);
+      if (result != VK_SUCCESS)
+         return result;
+   }
+   return vk_common_ImportSemaphoreFdKHR(_device, info);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+dzn_ImportFenceFdKHR(VkDevice _device, const VkImportFenceFdInfoKHR *info)
+{
+   VK_FROM_HANDLE(vk_device, device, _device);
+   VK_FROM_HANDLE(vk_fence, fence, info->fence);
+
+   if (!(info->flags & VK_FENCE_IMPORT_TEMPORARY_BIT)) {
+      VkResult result = dzn_sync_prepare_fd_import(device, &fence->permanent);
+      if (result != VK_SUCCESS)
+         return result;
+   }
+   return vk_common_ImportFenceFdKHR(_device, info);
+}
+
 struct dzn_bridge_job {
    struct dzn_queue *queue;
    struct util_sync_provider *sync;
