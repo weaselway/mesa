@@ -3522,7 +3522,15 @@ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint
       if (bindpoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
          struct dzn_graphics_pipeline *gfx =
             (struct dzn_graphics_pipeline *)pipeline;
-         ID3D12GraphicsCommandList1_IASetPrimitiveTopology(cmdbuf->cmdlist, gfx->ia.topology);
+         D3D12_PRIMITIVE_TOPOLOGY topology = gfx->ia.topology;
+         if (gfx->dyn.mask & DZN_DYN_PRIMITIVE_TOPOLOGY) {
+            struct dzn_physical_device *pdev =
+               container_of(device->vk.physical, struct dzn_physical_device, vk);
+            topology = dzn_translate_prim_topology(cmdbuf->state.topology,
+                                                   gfx->ia.patch_control_points,
+                                                   pdev->options15.TriangleFanSupported);
+         }
+         ID3D12GraphicsCommandList1_IASetPrimitiveTopology(cmdbuf->cmdlist, topology);
          dzn_graphics_pipeline_get_state(gfx, &cmdbuf->state.pipeline_variant);
          if (gfx->multiview.native_view_instancing)
             view_instance_mask = gfx->multiview.view_mask;
@@ -3762,11 +3770,12 @@ dzn_cmd_buffer_update_viewports(struct dzn_cmd_buffer *cmdbuf)
    const struct dzn_graphics_pipeline *pipeline =
       (const struct dzn_graphics_pipeline *)cmdbuf->state.pipeline;
 
-   if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_VIEWPORTS) ||
-       !pipeline->vp.count)
+   uint32_t count = pipeline->vp.dynamic_count ? cmdbuf->state.viewport_count : pipeline->vp.count;
+
+   if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_VIEWPORTS) || !count)
       return;
 
-   ID3D12GraphicsCommandList1_RSSetViewports(cmdbuf->cmdlist, pipeline->vp.count, cmdbuf->state.viewports);
+   ID3D12GraphicsCommandList1_RSSetViewports(cmdbuf->cmdlist, count, cmdbuf->state.viewports);
 }
 
 static void
@@ -3775,10 +3784,12 @@ dzn_cmd_buffer_update_scissors(struct dzn_cmd_buffer *cmdbuf)
    const struct dzn_graphics_pipeline *pipeline =
       (const struct dzn_graphics_pipeline *)cmdbuf->state.pipeline;
 
+   uint32_t count = pipeline->scissor.dynamic_count ? cmdbuf->state.scissor_count : pipeline->scissor.count;
+
    if (!(cmdbuf->state.dirty & DZN_CMD_DIRTY_SCISSORS))
       return;
 
-   if (!pipeline->scissor.count) {
+   if (!count) {
       /* Apply a scissor delimiting the render area. */
       ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, 1, &cmdbuf->state.render.area);
       return;
@@ -3786,8 +3797,8 @@ dzn_cmd_buffer_update_scissors(struct dzn_cmd_buffer *cmdbuf)
 
    D3D12_RECT scissors[MAX_SCISSOR];
 
-   memcpy(scissors, cmdbuf->state.scissors, sizeof(D3D12_RECT) * pipeline->scissor.count);
-   for (uint32_t i = 0; i < pipeline->scissor.count; i++) {
+   memcpy(scissors, cmdbuf->state.scissors, sizeof(D3D12_RECT) * count);
+   for (uint32_t i = 0; i < count; i++) {
       scissors[i].left = MAX2(scissors[i].left, cmdbuf->state.render.area.left);
       scissors[i].top = MAX2(scissors[i].top, cmdbuf->state.render.area.top);
       scissors[i].right = MIN2(scissors[i].right, cmdbuf->state.render.area.right);
@@ -3798,7 +3809,7 @@ dzn_cmd_buffer_update_scissors(struct dzn_cmd_buffer *cmdbuf)
          scissors[i] = (D3D12_RECT){ 1, 1, 1, 1 };
    }
 
-   ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, pipeline->scissor.count, scissors);
+   ID3D12GraphicsCommandList1_RSSetScissorRects(cmdbuf->cmdlist, count, scissors);
 }
 
 static void
@@ -4064,13 +4075,26 @@ dzn_cmd_buffer_prepare_draw(struct dzn_cmd_buffer *cmdbuf, bool indexed)
    return VK_SUCCESS;
 }
 
+static bool
+dzn_cmd_buffer_triangle_fan(const struct dzn_cmd_buffer *cmdbuf,
+                            const struct dzn_graphics_pipeline *pipeline)
+{
+   if (!(pipeline->dyn.mask & DZN_DYN_PRIMITIVE_TOPOLOGY))
+      return pipeline->ia.triangle_fan;
+
+   struct dzn_physical_device *pdev =
+      container_of(cmdbuf->vk.base.device->physical, struct dzn_physical_device, vk);
+   return cmdbuf->state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN &&
+          !pdev->options15.TriangleFanSupported;
+}
+
 static uint32_t
 dzn_cmd_buffer_triangle_fan_get_max_index_buf_size(struct dzn_cmd_buffer *cmdbuf, bool indexed)
 {
    struct dzn_graphics_pipeline *pipeline = (struct dzn_graphics_pipeline *)
       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
 
-   if (!pipeline->ia.triangle_fan)
+   if (!dzn_cmd_buffer_triangle_fan(cmdbuf, pipeline))
       return 0;
 
    uint32_t max_triangles;
@@ -4365,7 +4389,7 @@ dzn_cmd_buffer_indirect_draw(struct dzn_cmd_buffer *cmdbuf,
    draw_type.indirect_count = count_buf != NULL;
    draw_type.draw_params = pipeline->needs_draw_sysvals && !pdev->options21.ExtendedCommandInfoSupported;
    draw_type.draw_id = max_draw_count > 1 && pdev->options21.ExecuteIndirectTier < D3D12_EXECUTE_INDIRECT_TIER_1_1;
-   draw_type.triangle_fan = pipeline->ia.triangle_fan;
+   draw_type.triangle_fan = dzn_cmd_buffer_triangle_fan(cmdbuf, pipeline);
    draw_type.triangle_fan_primitive_restart = draw_type.triangle_fan && prim_restart;
 
    if (draw_type.draw_params || draw_type.draw_id || draw_type.triangle_fan) {
@@ -5481,11 +5505,19 @@ dzn_CmdBindPipeline(VkCommandBuffer commandBuffer,
          cmdbuf->state.dirty |= DZN_CMD_DIRTY_BLEND_CONSTANTS;
       }
 
-      for (uint32_t vb = 0; vb < gfx->vb.count; vb++)
-         cmdbuf->state.vb.views[vb].StrideInBytes = gfx->vb.strides[vb];
+      if (!(gfx->dyn.mask & DZN_DYN_VERTEX_STRIDE)) {
+         for (uint32_t vb = 0; vb < gfx->vb.count; vb++)
+            cmdbuf->state.vb.views[vb].StrideInBytes = gfx->vb.strides[vb];
 
-      if (gfx->vb.count > 0)
-         BITSET_SET_COUNT(cmdbuf->state.vb.dirty, 0, gfx->vb.count);
+         if (gfx->vb.count > 0)
+            BITSET_SET_COUNT(cmdbuf->state.vb.dirty, 0, gfx->vb.count);
+      }
+
+      /* The number of viewports and scissors set may change with the pipeline. */
+      if (gfx->vp.dynamic_count)
+         cmdbuf->state.dirty |= DZN_CMD_DIRTY_VIEWPORTS;
+      if (gfx->scissor.dynamic_count)
+         cmdbuf->state.dirty |= DZN_CMD_DIRTY_SCISSORS;
    }
 }
 
@@ -5623,7 +5655,7 @@ dzn_CmdDraw(VkCommandBuffer commandBuffer,
    uint32_t view_mask = pipeline->multiview.native_view_instancing ?
       1 : pipeline->multiview.view_mask;
 
-   if (pipeline->ia.triangle_fan) {
+   if (dzn_cmd_buffer_triangle_fan(cmdbuf, pipeline)) {
       D3D12_INDEX_BUFFER_VIEW ib_view = cmdbuf->state.ib.view;
 
       VkResult result =
@@ -5674,7 +5706,7 @@ dzn_CmdDrawIndexed(VkCommandBuffer commandBuffer,
    const struct dzn_graphics_pipeline *pipeline = (const struct dzn_graphics_pipeline *)
       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].pipeline;
 
-   if (pipeline->ia.triangle_fan &&
+   if (dzn_cmd_buffer_triangle_fan(cmdbuf, pipeline) &&
        dzn_graphics_pipeline_get_desc_template(pipeline, ib_strip_cut)) {
       /* The indexed+primitive-restart+triangle-fan combination is a mess,
        * since we have to walk the index buffer, skip entries with the
@@ -5718,7 +5750,7 @@ dzn_CmdDrawIndexed(VkCommandBuffer commandBuffer,
 
    D3D12_INDEX_BUFFER_VIEW ib_view = cmdbuf->state.ib.view;
 
-   if (pipeline->ia.triangle_fan) {
+   if (dzn_cmd_buffer_triangle_fan(cmdbuf, pipeline)) {
       VkResult result =
          dzn_cmd_buffer_triangle_fan_rewrite_index(cmdbuf, &indexCount, &firstIndex);
       if (result != VK_SUCCESS || !indexCount)
@@ -5739,7 +5771,7 @@ dzn_CmdDrawIndexed(VkCommandBuffer commandBuffer,
    }
 
    /* Restore the IB view if we modified it when lowering triangle fans. */
-   if (pipeline->ia.triangle_fan && ib_view.SizeInBytes) {
+   if (dzn_cmd_buffer_triangle_fan(cmdbuf, pipeline) && ib_view.SizeInBytes) {
       cmdbuf->state.ib.view = ib_view;
       cmdbuf->state.dirty |= DZN_CMD_DIRTY_IB;
    }
@@ -5808,11 +5840,13 @@ dzn_CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer,
 }
 
 VKAPI_ATTR void VKAPI_CALL
-dzn_CmdBindVertexBuffers(VkCommandBuffer commandBuffer,
-                         uint32_t firstBinding,
-                         uint32_t bindingCount,
-                         const VkBuffer *pBuffers,
-                         const VkDeviceSize *pOffsets)
+dzn_CmdBindVertexBuffers2(VkCommandBuffer commandBuffer,
+                          uint32_t firstBinding,
+                          uint32_t bindingCount,
+                          const VkBuffer *pBuffers,
+                          const VkDeviceSize *pOffsets,
+                          const VkDeviceSize *pSizes,
+                          const VkDeviceSize *pStrides)
 {
    VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
 
@@ -5823,12 +5857,32 @@ dzn_CmdBindVertexBuffers(VkCommandBuffer commandBuffer,
 
    for (uint32_t i = 0; i < bindingCount; i++) {
       VK_FROM_HANDLE(dzn_buffer, buf, pBuffers[i]);
+      D3D12_VERTEX_BUFFER_VIEW *view = &vbviews[firstBinding + i];
 
-      vbviews[firstBinding + i].BufferLocation = buf->gpuva + pOffsets[i];
-      vbviews[firstBinding + i].SizeInBytes = buf->size - pOffsets[i];
+      if (!buf) {
+         view->BufferLocation = 0;
+         view->SizeInBytes = 0;
+      } else {
+         view->BufferLocation = buf->gpuva + pOffsets[i];
+         view->SizeInBytes = pSizes && pSizes[i] != VK_WHOLE_SIZE ?
+                             pSizes[i] : buf->size - pOffsets[i];
+      }
+      if (pStrides)
+         view->StrideInBytes = pStrides[i];
    }
 
    BITSET_SET_COUNT(cmdbuf->state.vb.dirty, firstBinding, bindingCount);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdBindVertexBuffers(VkCommandBuffer commandBuffer,
+                         uint32_t firstBinding,
+                         uint32_t bindingCount,
+                         const VkBuffer *pBuffers,
+                         const VkDeviceSize *pOffsets)
+{
+   dzn_CmdBindVertexBuffers2(commandBuffer, firstBinding, bindingCount,
+                             pBuffers, pOffsets, NULL, NULL);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -6255,6 +6309,115 @@ dzn_CmdDispatchIndirect(VkCommandBuffer commandBuffer,
    }
 
    ID3D12GraphicsCommandList1_ExecuteIndirect(cmdbuf->cmdlist, cmdsig, 1, exec_buf, 0, NULL, 0);
+}
+
+/* Records a VK_EXT_extended_dynamic_state value that selects the pipeline
+ * variant. */
+#define DZN_SET_DYN_STATE(cmdbuf, field, value)                                  \
+   do {                                                                         \
+      (cmdbuf)->state.pipeline_variant.dyn.field = (value);                     \
+      (cmdbuf)->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=       \
+         DZN_CMD_BINDPOINT_DIRTY_PIPELINE;                                      \
+   } while (0)
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetCullMode(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, cull_mode, cullMode);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetFrontFace(VkCommandBuffer commandBuffer, VkFrontFace frontFace)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, front_face, frontFace);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetDepthTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthTestEnable)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, depth_test, !!depthTestEnable);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetDepthWriteEnable(VkCommandBuffer commandBuffer, VkBool32 depthWriteEnable)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, depth_write, !!depthWriteEnable);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetDepthCompareOp(VkCommandBuffer commandBuffer, VkCompareOp depthCompareOp)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, depth_compare_op, depthCompareOp);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetDepthBoundsTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthBoundsTestEnable)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, depth_bounds_test, !!depthBoundsTestEnable);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetStencilTestEnable(VkCommandBuffer commandBuffer, VkBool32 stencilTestEnable)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+   DZN_SET_DYN_STATE(cmdbuf, stencil_test, !!stencilTestEnable);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetStencilOp(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask,
+                    VkStencilOp failOp, VkStencilOp passOp,
+                    VkStencilOp depthFailOp, VkCompareOp compareOp)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+
+   if (faceMask & VK_STENCIL_FACE_FRONT_BIT) {
+      DZN_SET_DYN_STATE(cmdbuf, stencil_front.fail_op, failOp);
+      DZN_SET_DYN_STATE(cmdbuf, stencil_front.pass_op, passOp);
+      DZN_SET_DYN_STATE(cmdbuf, stencil_front.depth_fail_op, depthFailOp);
+      DZN_SET_DYN_STATE(cmdbuf, stencil_front.compare_op, compareOp);
+   }
+   if (faceMask & VK_STENCIL_FACE_BACK_BIT) {
+      DZN_SET_DYN_STATE(cmdbuf, stencil_back.fail_op, failOp);
+      DZN_SET_DYN_STATE(cmdbuf, stencil_back.pass_op, passOp);
+      DZN_SET_DYN_STATE(cmdbuf, stencil_back.depth_fail_op, depthFailOp);
+      DZN_SET_DYN_STATE(cmdbuf, stencil_back.compare_op, compareOp);
+   }
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetPrimitiveTopology(VkCommandBuffer commandBuffer, VkPrimitiveTopology primitiveTopology)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+
+   cmdbuf->state.topology = primitiveTopology;
+   cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+      DZN_CMD_BINDPOINT_DIRTY_PIPELINE;
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetViewportWithCount(VkCommandBuffer commandBuffer, uint32_t viewportCount,
+                            const VkViewport *pViewports)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+
+   cmdbuf->state.viewport_count = viewportCount;
+   dzn_CmdSetViewport(commandBuffer, 0, viewportCount, pViewports);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_CmdSetScissorWithCount(VkCommandBuffer commandBuffer, uint32_t scissorCount,
+                           const VkRect2D *pScissors)
+{
+   VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+
+   cmdbuf->state.scissor_count = scissorCount;
+   dzn_CmdSetScissor(commandBuffer, 0, scissorCount, pScissors);
 }
 
 VKAPI_ATTR void VKAPI_CALL
