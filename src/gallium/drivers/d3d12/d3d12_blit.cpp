@@ -223,7 +223,8 @@ direct_copy_supported(struct d3d12_screen *screen,
    if ((screen->opts2.ProgrammableSamplePositionsTier ==
         D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED &&
         (info->src.resource->bind & PIPE_BIND_DEPTH_STENCIL ||
-         info->dst.resource->bind & PIPE_BIND_DEPTH_STENCIL)) ||
+         info->dst.resource->bind & PIPE_BIND_DEPTH_STENCIL ||
+         info->src.resource->nr_samples > 1)) ||
         info->src.resource->nr_samples != info->dst.resource->nr_samples) {
 
       if (info->dst.box.x != 0 ||
