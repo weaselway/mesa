@@ -1161,6 +1161,7 @@ select_shader_variant(struct d3d12_selection_context *sel_ctx, d3d12_shader_sele
       NIR_PASS(_, new_nir_variant, dxil_nir_set_tcs_patches_in, key.hs.patch_vertices_in);
    } else if (new_nir_variant->info.stage == MESA_SHADER_TESS_EVAL) {
       new_nir_variant->info.tess.tcs_vertices_out = static_cast<uint8_t>(key.ds.tcs_vertices_out);
+      NIR_PASS(_, new_nir_variant, nir_lower_patch_vertices, key.ds.tcs_vertices_out, NULL);
    }
 
    {

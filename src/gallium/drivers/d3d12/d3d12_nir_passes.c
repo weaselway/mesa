@@ -278,9 +278,7 @@ is_patch_vertices_in(const nir_instr *instr, const void *_state)
 static nir_def *
 lower_load_patch_vertices_in(nir_builder *b, nir_instr *instr, void *_state)
 {
-   return b->shader->info.stage == MESA_SHADER_TESS_CTRL ?
-      d3d12_get_state_var(b, D3D12_STATE_VAR_PATCH_VERTICES_IN, "d3d12_FirstVertex", glsl_uint_type(), _state) :
-      nir_imm_int(b, b->shader->info.tess.tcs_vertices_out);
+   return d3d12_get_state_var(b, D3D12_STATE_VAR_PATCH_VERTICES_IN, "d3d12_FirstVertex", glsl_uint_type(), _state);
 }
 
 bool
@@ -288,8 +286,8 @@ d3d12_lower_load_patch_vertices_in(struct nir_shader *nir)
 {
    nir_variable *var = NULL;
 
-   if (nir->info.stage != MESA_SHADER_TESS_CTRL &&
-       nir->info.stage != MESA_SHADER_TESS_EVAL) {
+   /* TES uses the TCS output count, which is only known per variant */
+   if (nir->info.stage != MESA_SHADER_TESS_CTRL) {
       nir_shader_preserve_all_metadata(nir);
       return false;
    }
