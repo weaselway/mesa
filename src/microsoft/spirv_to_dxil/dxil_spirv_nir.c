@@ -81,6 +81,8 @@ spirv_caps = {
    .Tessellation = true,
    .DemoteToHelperInvocation = true,
    .PhysicalStorageBufferAddresses = true,
+   .VulkanMemoryModel = true,
+   .VulkanMemoryModelDeviceScope = true,
 };
 
 static const struct spirv_to_nir_options
