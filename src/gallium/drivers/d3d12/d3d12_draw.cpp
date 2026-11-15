@@ -1087,9 +1087,18 @@ d3d12_draw_vbo(struct pipe_context *pctx,
    }
 
    if (ctx->cmdlist_dirty & D3D12_DIRTY_SCISSOR) {
-      if (ctx->gfx_pipeline_state.rast->base.scissor && ctx->num_viewports > 0)
-         ctx->cmdlist->RSSetScissorRects(ctx->num_viewports, ctx->scissors);
-      else
+      if (ctx->gfx_pipeline_state.rast->base.scissor && ctx->num_viewports > 0) {
+         /* NVIDIA sometimes ignores empty rects after a cmdlist with full rects,
+          * so use a 1x1 rect outside the largest possible render target instead. */
+         D3D12_RECT scissors[PIPE_MAX_VIEWPORTS];
+         for (unsigned i = 0; i < ctx->num_viewports; ++i) {
+            scissors[i] = ctx->scissors[i];
+            if (scissors[i].left >= scissors[i].right || scissors[i].top >= scissors[i].bottom)
+               scissors[i] = { D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION, D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION,
+                               D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION + 1, D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION + 1 };
+         }
+         ctx->cmdlist->RSSetScissorRects(ctx->num_viewports, scissors);
+      } else
          ctx->cmdlist->RSSetScissorRects(PIPE_MAX_VIEWPORTS, MAX_SCISSOR_ARRAY);
    }
 
