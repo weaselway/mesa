@@ -152,6 +152,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .KHR_maintenance1                      = true,
       .KHR_maintenance2                      = true,
       .KHR_maintenance3                      = true,
+      .KHR_maintenance4                      = true,
       .KHR_multiview                         = true,
       .KHR_relaxed_block_layout              = true,
       .KHR_sampler_mirror_clamp_to_edge      = true,
@@ -872,7 +873,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
       .shaderZeroInitializeWorkgroupMemory = true,
       .dynamicRendering                   = true,
       .shaderIntegerDotProduct            = true,
-      .maintenance4                       = false,
+      .maintenance4                       = true,
       .shaderExpectAssume                 = true,
 
       .vertexAttributeInstanceRateDivisor = true,
@@ -1054,6 +1055,11 @@ dzn_physical_device_get_properties(const struct dzn_physical_device *pdev,
        * just the VRAM.
        */
       .maxMemoryAllocationSize =
+         CLAMP(MAX2(pdev->desc.dedicated_video_memory,
+                    pdev->desc.dedicated_system_memory +
+                    pdev->desc.shared_system_memory) / 4,
+               128ull * 1024 * 1024, 2ull * 1024 * 1024 * 1024),
+      .maxBufferSize =
          CLAMP(MAX2(pdev->desc.dedicated_video_memory,
                     pdev->desc.dedicated_system_memory +
                     pdev->desc.shared_system_memory) / 4,
@@ -3966,6 +3972,29 @@ dzn_GetBufferMemoryRequirements2(VkDevice dev,
          break;
       }
    }
+}
+
+VKAPI_ATTR void VKAPI_CALL
+dzn_GetDeviceBufferMemoryRequirements(VkDevice _device,
+                                      const VkDeviceBufferMemoryRequirements *pInfo,
+                                      VkMemoryRequirements2 *pMemoryRequirements)
+{
+   VK_FROM_HANDLE(dzn_device, device, _device);
+   VkBuffer buffer;
+
+   /* Buffers don't own D3D12 resources before binding, a temporary one is cheap. */
+   if (dzn_buffer_create(device, pInfo->pCreateInfo, NULL, &buffer) != VK_SUCCESS) {
+      memset(&pMemoryRequirements->memoryRequirements, 0,
+             sizeof(pMemoryRequirements->memoryRequirements));
+      return;
+   }
+
+   const VkBufferMemoryRequirementsInfo2 info = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
+      .buffer = buffer,
+   };
+   dzn_GetBufferMemoryRequirements2(_device, &info, pMemoryRequirements);
+   dzn_buffer_destroy(dzn_buffer_from_handle(buffer), NULL);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
