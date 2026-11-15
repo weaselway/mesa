@@ -79,6 +79,7 @@ spirv_caps = {
    .Int64 = true,
    .Float64 = true,
    .Tessellation = true,
+   .DemoteToHelperInvocation = true,
    .PhysicalStorageBufferAddresses = true,
 };
 
