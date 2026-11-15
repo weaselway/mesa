@@ -678,11 +678,13 @@ lower_triangle_strip_end_primitive(nir_builder *b, nir_intrinsic_instr *intr,
 }
 
 /* D3D12 allows at most 1024 output scalars per GS invocation. Exceeding it is
- * not caught without the DXIL validator and faults the GPU.
- * shortcut: vertices past the clamp are dropped; splitting the GS into
- * instances would keep them. */
+ * not caught without the DXIL validator and faults the GPU. The point sprite
+ * and triangle strip lowerings can multiply vertices_out past it. Split the
+ * primitives, which all have prim_vertices vertices, over GS instances:
+ * instance i of an input invocation emits primitives [i * n, (i + 1) * n).
+ */
 void
-d3d12_clamp_gs_vertices_out(nir_shader *shader)
+d3d12_split_gs_instances(nir_shader *shader, unsigned prim_vertices)
 {
    unsigned out_comps = 0;
    nir_foreach_variable_with_modes(var, shader, nir_var_shader_out) {
@@ -690,9 +692,71 @@ d3d12_clamp_gs_vertices_out(nir_shader *shader)
       if (var->data.location != VARYING_SLOT_PSIZ)
          out_comps += glsl_get_component_slots(var->type);
    }
-   shader->info.gs.vertices_out = MIN2(shader->info.gs.vertices_out,
-                                       D3D12_REQ_GS_INVOCATION_32BIT_OUTPUT_COMPONENT_LIMIT /
-                                          MAX2(out_comps, 1));
+   unsigned max_vertices = D3D12_REQ_GS_INVOCATION_32BIT_OUTPUT_COMPONENT_LIMIT / MAX2(out_comps, 1);
+   if (shader->info.gs.vertices_out <= max_vertices)
+      return;
+
+   unsigned prims_per_instance = max_vertices / prim_vertices;
+   unsigned num_prims = DIV_ROUND_UP(shader->info.gs.vertices_out, prim_vertices);
+   unsigned num_splits = prims_per_instance ? DIV_ROUND_UP(num_prims, prims_per_instance) : 0;
+   unsigned invocations = MAX2(shader->info.gs.invocations, 1);
+   if (!num_splits || invocations * num_splits > D3D12_GS_MAX_INSTANCE_COUNT) {
+      /* shortcut: vertices past the limit are dropped; a GS this large would
+       * need a second draw */
+      shader->info.gs.vertices_out = max_vertices;
+      return;
+   }
+
+   nir_function_impl *impl = nir_shader_get_entrypoint(shader);
+   nir_builder b = nir_builder_at(nir_before_impl(impl));
+   nir_variable *prim_var = nir_local_variable_create(impl, glsl_uint_type(), "prim_index");
+   nir_store_var(&b, prim_var, nir_imm_int(&b, 0), 1);
+   nir_def *id = nir_load_invocation_id(&b);
+   nir_def *split = nir_umod_imm(&b, id, num_splits);
+   nir_def *user_id = nir_udiv_imm(&b, id, num_splits);
+
+   /* Collect first, the ifs below add blocks the walk would visit again. */
+   struct util_dynarray intrs;
+   util_dynarray_init(&intrs, NULL);
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr(instr, block) {
+         if (instr->type == nir_instr_type_intrinsic)
+            util_dynarray_append(&intrs, nir_instr_as_intrinsic(instr));
+      }
+   }
+
+   util_dynarray_foreach(&intrs, nir_intrinsic_instr *, it) {
+      nir_intrinsic_instr *intr = *it;
+      switch (intr->intrinsic) {
+      case nir_intrinsic_load_invocation_id:
+         if (&intr->def != id)
+            nir_def_replace(&intr->def, user_id);
+         break;
+      case nir_intrinsic_emit_vertex:
+      case nir_intrinsic_emit_vertex_with_counter:
+      case nir_intrinsic_end_primitive:
+      case nir_intrinsic_end_primitive_with_counter: {
+         b.cursor = nir_before_instr(&intr->instr);
+         nir_def *prim = nir_load_var(&b, prim_var);
+         nir_push_if(&b, nir_ieq(&b, nir_udiv_imm(&b, prim, prims_per_instance), split));
+         nir_instr_remove(&intr->instr);
+         nir_builder_instr_insert(&b, &intr->instr);
+         nir_pop_if(&b, NULL);
+         if (intr->intrinsic == nir_intrinsic_end_primitive ||
+             intr->intrinsic == nir_intrinsic_end_primitive_with_counter)
+            nir_store_var(&b, prim_var, nir_iadd_imm(&b, prim, 1), 1);
+         break;
+      }
+      default:
+         break;
+      }
+   }
+   util_dynarray_fini(&intrs);
+
+   BITSET_SET(shader->info.system_values_read, SYSTEM_VALUE_INVOCATION_ID);
+   shader->info.gs.invocations = invocations * num_splits;
+   shader->info.gs.vertices_out = prims_per_instance * prim_vertices;
+   nir_progress(true, impl, nir_metadata_none);
 }
 
 bool
@@ -747,7 +811,6 @@ d3d12_lower_triangle_strip(nir_shader *shader)
    _mesa_hash_table_destroy(tmp_vars, NULL);
    nir_progress(progress, impl, nir_metadata_none);
    NIR_PASS(progress, shader, nir_lower_var_copies);
-   d3d12_clamp_gs_vertices_out(shader);
    return progress;
 }
 
