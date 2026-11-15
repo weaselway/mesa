@@ -3651,6 +3651,7 @@ assign_initial_varying_locations(const struct pipe_screen *screen,
        */
       const unsigned lower_builtin_vars_xfb =
          producer->Stage == MESA_SHADER_VERTEX ||
+         producer->Stage == MESA_SHADER_TESS_EVAL ||
          producer->Stage == MESA_SHADER_GEOMETRY ?
          ((screen->caps.viewport_transform_lowered ? VARYING_BIT_POS : 0) |
           (screen->caps.psiz_clamped ? VARYING_BIT_PSIZ : 0)) : 0;
