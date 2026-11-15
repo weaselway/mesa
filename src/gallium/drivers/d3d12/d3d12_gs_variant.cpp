@@ -79,18 +79,26 @@ d3d12_make_passthrough_gs(struct d3d12_context *ctx, struct d3d12_gs_variant_key
                                                   &d3d12_screen(ctx->base.screen)->nir_options,
                                                   "passthrough");
 
+   /* Points for point sprites, the tessellator's primitive for tessellation */
+   unsigned num_vertices = MAX2(key->passthrough_vertices, 1);
+   static const mesa_prim in_prims[] = { MESA_PRIM_POINTS, MESA_PRIM_LINES, MESA_PRIM_TRIANGLES };
+   static const mesa_prim out_prims[] = { MESA_PRIM_POINTS, MESA_PRIM_LINE_STRIP, MESA_PRIM_TRIANGLE_STRIP };
+
    nir = b.shader;
    nir->info.inputs_read = varyings;
    nir->info.outputs_written = varyings;
-   nir->info.gs.input_primitive = MESA_PRIM_POINTS;
-   nir->info.gs.output_primitive = MESA_PRIM_POINTS;
-   nir->info.gs.vertices_in = 1;
-   nir->info.gs.vertices_out = 1;
+   nir->info.gs.input_primitive = in_prims[num_vertices - 1];
+   nir->info.gs.output_primitive = out_prims[num_vertices - 1];
+   nir->info.gs.vertices_in = num_vertices;
+   nir->info.gs.vertices_out = num_vertices;
    nir->info.gs.invocations = 1;
    nir->info.gs.active_stream_mask = 1;
    nir->num_outputs = 0;
 
-   /* Copy inputs to outputs. */
+   nir_variable *ins[VARYING_SLOT_MAX * 4], *outs[VARYING_SLOT_MAX * 4];
+   unsigned num_vars = 0;
+
+   /* Create the inputs and outputs. */
    while (varyings) {
       char tmp[100];
       const int i = u_bit_scan64(&varyings);
@@ -103,7 +111,7 @@ d3d12_make_passthrough_gs(struct d3d12_context *ctx, struct d3d12_gs_variant_key
          snprintf(tmp, ARRAY_SIZE(tmp), "in_%d", key->varyings->slots[i].vars[j].driver_location);
          in = nir_variable_create(nir,
                                   nir_var_shader_in,
-                                  glsl_array_type(key->varyings->slots[i].types[j], 1, false),
+                                  glsl_array_type(key->varyings->slots[i].types[j], num_vertices, false),
                                   tmp);
          in->data.location = i;
          in->data.location_frac = j;
@@ -123,25 +131,34 @@ d3d12_make_passthrough_gs(struct d3d12_context *ctx, struct d3d12_gs_variant_key
          out->data.compact = key->varyings->slots[i].vars[j].compact;
          out->data.always_active_io = key->varyings->slots[i].vars[j].always_active_io;
 
-         nir_deref_instr *in_value = nir_build_deref_array(&b, nir_build_deref_var(&b, in),
-                                                               nir_imm_int(&b, 0));
-         copy_vars(&b, nir_build_deref_var(&b, out), in_value);
+         ins[num_vars] = in;
+         outs[num_vars++] = out;
          nir->num_outputs++;
       }
    }
 
+   nir_variable *front_facing_var = NULL;
    if (key->has_front_face) {
-      nir_variable *front_facing_var = nir_variable_create(nir,
-                                                       nir_var_shader_out,
-                                                       glsl_uint_type(),
-                                                       "gl_FrontFacing");
+      front_facing_var = nir_variable_create(nir,
+                                             nir_var_shader_out,
+                                             glsl_uint_type(),
+                                             "gl_FrontFacing");
       front_facing_var->data.location = VARYING_SLOT_VAR12;
       front_facing_var->data.driver_location = nir->num_outputs++;
       front_facing_var->data.interpolation = INTERP_MODE_FLAT;
-      nir_store_deref(&b, nir_build_deref_var(&b, front_facing_var), nir_imm_int(&b, 1), 1);
    }
 
-   nir_emit_vertex(&b, 0);
+   /* Copy inputs to outputs, outputs are undefined after each emit. */
+   for (unsigned v = 0; v < num_vertices; v++) {
+      for (unsigned k = 0; k < num_vars; k++) {
+         nir_deref_instr *in_value = nir_build_deref_array(&b, nir_build_deref_var(&b, ins[k]),
+                                                               nir_imm_int(&b, v));
+         copy_vars(&b, nir_build_deref_var(&b, outs[k]), in_value);
+      }
+      if (front_facing_var)
+         nir_store_deref(&b, nir_build_deref_var(&b, front_facing_var), nir_imm_int(&b, 1), 1);
+      nir_emit_vertex(&b, 0);
+   }
    nir_end_primitive(&b, 0);
 
    NIR_PASS(_, nir, nir_lower_var_copies);

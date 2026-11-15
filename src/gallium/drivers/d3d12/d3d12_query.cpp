@@ -41,7 +41,7 @@ num_sub_queries(unsigned query_type, unsigned index)
 {
    switch (query_type) {
    case PIPE_QUERY_PRIMITIVES_GENERATED:
-      return index == 0 ? 3 : 1;
+      return index == 0 ? 4 : 1;
    case PIPE_QUERY_SO_OVERFLOW_ANY_PREDICATE:
       return 4;
    default:
@@ -300,6 +300,10 @@ accumulate_result_cpu(struct d3d12_context *ctx, struct d3d12_query *q,
          if (!accumulate_subresult_cpu(ctx, q, 2, &local_result))
             return false;
          result->u64 += local_result.pipeline_statistics.ia_primitives;
+
+         if (!accumulate_subresult_cpu(ctx, q, 3, &local_result))
+            return false;
+         result->u64 += local_result.pipeline_statistics.gs_invocations;
       }
       return true;
    case PIPE_QUERY_PRIMITIVES_EMITTED:
@@ -329,10 +333,15 @@ subquery_should_be_active(struct d3d12_context *ctx, struct d3d12_query *q, unsi
       bool has_xfb = !!ctx->gfx_pipeline_state.num_so_targets;
       struct d3d12_shader_selector *gs = ctx->gfx_stages[MESA_SHADER_GEOMETRY];
       bool has_gs = gs && !gs->is_variant;
+      /* IAPrimitives counts patches. With tessellation a passthrough GS is
+       * bound instead (see d3d12_needs_tess_primitive_count), which runs once
+       * per tessellated primitive. */
+      bool has_tess_gs = gs && gs->is_variant && ctx->gfx_stages[MESA_SHADER_TESS_EVAL];
       switch (sub_query) {
       case 0: return has_xfb;
       case 1: return !has_xfb && has_gs;
-      case 2: return !has_xfb && !has_gs;
+      case 2: return !has_xfb && !has_gs && !has_tess_gs;
+      case 3: return !has_xfb && has_tess_gs;
       default: UNREACHABLE("Invalid subquery for primitives generated");
       }
       break;
@@ -680,6 +689,20 @@ d3d12_validate_queries(struct d3d12_context *ctx)
             begin_subquery(ctx, query, i);
       }
    }
+}
+
+bool
+d3d12_needs_tess_primitive_count(struct d3d12_context *ctx)
+{
+   if (ctx->queries_disabled || ctx->gfx_pipeline_state.num_so_targets ||
+       !ctx->gfx_stages[MESA_SHADER_TESS_EVAL])
+      return false;
+
+   list_for_each_entry(struct d3d12_query, query, &ctx->active_queries, active_list) {
+      if (query->type == PIPE_QUERY_PRIMITIVES_GENERATED && query->index == 0)
+         return true;
+   }
+   return false;
 }
 
 static void
