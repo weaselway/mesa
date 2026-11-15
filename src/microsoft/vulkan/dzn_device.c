@@ -79,7 +79,7 @@
 #include "wsl_sandbox.h"
 #endif
 
-#define DZN_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
+#define DZN_API_VERSION VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION)
 
 #define MAX_TIER2_MEMORY_TYPES 4
 
@@ -904,7 +904,9 @@ dzn_physical_device_get_properties(const struct dzn_physical_device *pdev,
    }
 
    *properties = (struct vk_properties){
-      .apiVersion = DZN_API_VERSION,
+      /* 1.3 needs bufferDeviceAddress and subgroupSizeControl */
+      .apiVersion = pdev->shader_model >= D3D_SHADER_MODEL_6_6 && pdev->options1.WaveOps ?
+                    DZN_API_VERSION : VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION),
       .driverVersion = vk_get_driver_version(),
 
       .vendorID = pdev->desc.vendor_id,
