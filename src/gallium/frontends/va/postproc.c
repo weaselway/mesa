@@ -134,13 +134,13 @@ vlVaQueryVideoProcPipelineCaps(VADriverContextP ctx, VAContextID context,
 
    vlVaDriver *drv = VL_VA_DRIVER(ctx);
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    for (i = 0; i < num_filters; i++) {
       vlVaBuffer *buf = handle_table_get(drv->htab, filters[i]);
       VAProcFilterParameterBufferBase *filter;
 
       if (!buf || buf->type != VAProcFilterParameterBufferType) {
-         mtx_unlock(&drv->mutex);
+         mtx_unlock(&vl_va_mutex);
          return VA_STATUS_ERROR_INVALID_BUFFER;
       }
 
@@ -155,11 +155,11 @@ vlVaQueryVideoProcPipelineCaps(VADriverContextP ctx, VAContextID context,
          break;
       }
       default:
-         mtx_unlock(&drv->mutex);
+         mtx_unlock(&vl_va_mutex);
          return VA_STATUS_ERROR_UNIMPLEMENTED;
       }
    }
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -180,10 +180,10 @@ vlVaQueryVideoProcFilters(VADriverContextP ctx, VAContextID context_id,
 
    drv = VL_VA_DRIVER(ctx);
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    context = handle_table_get(drv->htab, context_id);
    if (!context) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    }
 
@@ -191,7 +191,7 @@ vlVaQueryVideoProcFilters(VADriverContextP ctx, VAContextID context_id,
        context->templat.entrypoint != PIPE_VIDEO_ENTRYPOINT_BITSTREAM)
       filters[num++] = VAProcFilterDeinterlacing;
 
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    *num_filters = num;
 
@@ -216,17 +216,17 @@ vlVaQueryVideoProcFilterCaps(VADriverContextP ctx, VAContextID context_id,
 
    drv = VL_VA_DRIVER(ctx);
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    context = handle_table_get(drv->htab, context_id);
    if (!context) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    }
 
    supports_filters = context->templat.entrypoint != PIPE_VIDEO_ENTRYPOINT_ENCODE &&
                       context->templat.entrypoint != PIPE_VIDEO_ENTRYPOINT_BITSTREAM;
 
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    i = 0;
 

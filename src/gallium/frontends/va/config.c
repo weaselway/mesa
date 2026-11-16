@@ -682,9 +682,9 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
          }
       }
 
-      mtx_lock(&drv->mutex);
+      mtx_lock(&vl_va_mutex);
       *config_id = handle_table_add(drv->htab, config);
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_SUCCESS;
    }
 
@@ -777,9 +777,9 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
       }
    }
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    *config_id = handle_table_add(drv->htab, config);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -798,17 +798,17 @@ vlVaDestroyConfig(VADriverContextP ctx, VAConfigID config_id)
    if (!drv)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    config = handle_table_get(drv->htab, config_id);
 
    if (!config) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_CONFIG;
    }
 
    FREE(config);
    handle_table_remove(drv->htab, config_id);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -828,9 +828,9 @@ vlVaQueryConfigAttributes(VADriverContextP ctx, VAConfigID config_id, VAProfile 
    if (!drv)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    config = handle_table_get(drv->htab, config_id);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    if (!config)
       return VA_STATUS_ERROR_INVALID_CONFIG;
