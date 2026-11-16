@@ -173,10 +173,10 @@ vlVaPutSurface(VADriverContextP ctx, VASurfaceID surface_id, void* draw, short s
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    surf = handle_table_get(drv->htab, surface_id);
    if (!surf || !surf->buffer) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SURFACE;
    }
    vlVaGetSurfaceBuffer(drv, surf);
@@ -186,7 +186,7 @@ vlVaPutSurface(VADriverContextP ctx, VASurfaceID surface_id, void* draw, short s
 
    tex = vscreen->texture_from_drawable(vscreen, draw);
    if (!tex) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_DISPLAY;
    }
 
@@ -205,7 +205,7 @@ vlVaPutSurface(VADriverContextP ctx, VASurfaceID surface_id, void* draw, short s
 
    if (!dst_buffer) {
       pipe_resource_reference(&resources[0], NULL);
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_ALLOCATION_FAILED;
    }
 
@@ -241,14 +241,14 @@ vlVaPutSurface(VADriverContextP ctx, VASurfaceID surface_id, void* draw, short s
    status = vlVaPostProc(drv, NULL, surf->buffer, dst_buffer, &param);
    if (status != VA_STATUS_SUCCESS) {
       dst_buffer->destroy(dst_buffer);
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return status;
    }
 
    status = vlVaPutSubpictures(surf, drv, dst_buffer, dirty_area, &src_rect, &dst_rect);
    dst_buffer->destroy(dst_buffer);
    if (status) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return status;
    }
 
@@ -264,7 +264,7 @@ vlVaPutSurface(VADriverContextP ctx, VASurfaceID surface_id, void* draw, short s
 
 
    pipe_resource_reference(&tex, NULL);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
    return VA_STATUS_SUCCESS;
 }
 
@@ -282,37 +282,37 @@ vlVaCreateSubpicture(VADriverContextP ctx, VAImageID image,
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    img = handle_table_get(drv->htab, image);
    if (!img) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_IMAGE;
    }
 
    sub = CALLOC(1, sizeof(*sub));
    if (!sub) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_ALLOCATION_FAILED;
    }
 
    format = VaFourccToPipeFormat(img->format.fourcc);
    if (format == PIPE_FORMAT_NONE) {
       FREE(sub);
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
    }
 
    img_buf = handle_table_get(drv->htab, img->buf);
    if (!img_buf) {
       FREE(sub);
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_BUFFER;
    }
 
    sub->surf = CALLOC(1, sizeof(vlVaSurface));
    if (!sub->surf) {
       FREE(sub);
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_ALLOCATION_FAILED;
    }
 
@@ -323,13 +323,13 @@ vlVaCreateSubpicture(VADriverContextP ctx, VAImageID image,
    if (vlVaHandleSurfaceAllocate(drv, sub->surf, &sub->surf->templat, NULL, 0) != VA_STATUS_SUCCESS) {
       FREE(sub->surf);
       FREE(sub);
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_ALLOCATION_FAILED;
    }
 
    sub->image = img;
    *subpicture = handle_table_add(VL_VA_DRIVER(ctx)->htab, sub);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -344,11 +344,11 @@ vlVaDestroySubpicture(VADriverContextP ctx, VASubpictureID subpicture)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
 
    sub = handle_table_get(drv->htab, subpicture);
    if (!sub) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SUBPICTURE;
    }
 
@@ -357,7 +357,7 @@ vlVaDestroySubpicture(VADriverContextP ctx, VASubpictureID subpicture)
 
    FREE(sub);
    handle_table_remove(drv->htab, subpicture);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -375,29 +375,29 @@ vlVaSubpictureImage(VADriverContextP ctx, VASubpictureID subpicture, VAImageID i
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
 
    img = handle_table_get(drv->htab, image);
    if (!img) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_IMAGE;
    }
 
    sub = handle_table_get(drv->htab, subpicture);
    if (!sub) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SUBPICTURE;
    }
 
    format = VaFourccToPipeFormat(img->format.fourcc);
    if (format == PIPE_FORMAT_NONE) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
    }
 
    img_buf = handle_table_get(drv->htab, img->buf);
    if (!img_buf) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_BUFFER;
    }
 
@@ -406,7 +406,7 @@ vlVaSubpictureImage(VADriverContextP ctx, VASubpictureID subpicture, VAImageID i
 
    sub->surf = CALLOC(1, sizeof(vlVaSurface));
    if (!sub->surf) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_ALLOCATION_FAILED;
    }
 
@@ -417,12 +417,12 @@ vlVaSubpictureImage(VADriverContextP ctx, VASubpictureID subpicture, VAImageID i
    if (vlVaHandleSurfaceAllocate(drv, sub->surf, &sub->surf->templat, NULL, 0) != VA_STATUS_SUCCESS) {
       FREE(sub->surf);
       sub->surf = NULL;
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_ALLOCATION_FAILED;
    }
 
    sub->image = img;
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -464,18 +464,18 @@ vlVaAssociateSubpicture(VADriverContextP ctx, VASubpictureID subpicture,
    if (!ctx)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
 
    sub = handle_table_get(drv->htab, subpicture);
    if (!sub) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SUBPICTURE;
    }
 
    for (i = 0; i < num_surfaces; i++) {
       surf = handle_table_get(drv->htab, target_surfaces[i]);
       if (!surf) {
-         mtx_unlock(&drv->mutex);
+         mtx_unlock(&vl_va_mutex);
          return VA_STATUS_ERROR_INVALID_SURFACE;
       }
    }
@@ -486,12 +486,12 @@ vlVaAssociateSubpicture(VADriverContextP ctx, VASubpictureID subpicture,
    for (i = 0; i < num_surfaces; i++) {
       surf = handle_table_get(drv->htab, target_surfaces[i]);
       if (!surf) {
-         mtx_unlock(&drv->mutex);
+         mtx_unlock(&vl_va_mutex);
          return VA_STATUS_ERROR_INVALID_SURFACE;
       }
       util_dynarray_append(&surf->subpics, sub);
    }
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -509,18 +509,18 @@ vlVaDeassociateSubpicture(VADriverContextP ctx, VASubpictureID subpicture,
    if (!ctx)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
 
    sub = handle_table_get(drv->htab, subpicture);
    if (!sub) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SUBPICTURE;
    }
 
    for (i = 0; i < num_surfaces; i++) {
       surf = handle_table_get(drv->htab, target_surfaces[i]);
       if (!surf) {
-         mtx_unlock(&drv->mutex);
+         mtx_unlock(&vl_va_mutex);
          return VA_STATUS_ERROR_INVALID_SURFACE;
       }
 
@@ -536,7 +536,7 @@ vlVaDeassociateSubpicture(VADriverContextP ctx, VASubpictureID subpicture,
       while (surf->subpics.size && util_dynarray_top(&surf->subpics, vlVaSubpicture *) == NULL)
          (void)util_dynarray_pop(&surf->subpics, vlVaSubpicture *);
    }
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }

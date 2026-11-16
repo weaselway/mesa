@@ -336,13 +336,15 @@ ProfileToPipe(VAProfile profile)
    }
 }
 
+/* Serializes all VA calls of the process, see context.c. */
+extern mtx_t vl_va_mutex;
+
 typedef struct {
    struct vl_screen *vscreen;
    struct pipe_context *pipe;
    struct pipe_context *pipe2;
    struct handle_table *htab;
    struct pipe_video_codec *proc;
-   mtx_t mutex;
    char vendor_string[256];
 
    bool has_external_handles;
