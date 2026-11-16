@@ -31,6 +31,7 @@ module in dxgdrm's `docs/adr`. They are referred to as "weaselway NNNN" and
 | [0014](0014-wayland-swap-interval-0-is-unthrottled.md) | Wayland swaps at interval 0 do not wait for the frame callback | Accepted |
 | [0015](0015-pipeline-state-blobs-in-a-disk-cache.md) | d3d12 keeps pipeline state blobs in a disk cache, except on NVIDIA | Accepted |
 | [0016](0016-flatpak-sandbox-reaches-wsl-through-the-gl-extension.md) | In a Flatpak sandbox, Mesa reaches WSL through its GL extension | Accepted |
+| [0017](0017-one-va-lock-per-process.md) | All VADisplays of a process share one lock | Accepted |
 
 ## Known risks
 
@@ -48,7 +49,8 @@ Found while writing these records, details in the linked files:
   ([0003](0003-shared-handles-as-dma-bufs.md)).
 - Some changes affect every driver: the relaxed `sync_valid_fd()`
   ([0005](0005-fence-fds-are-sync-files-from-dxgdrm.md)) and the Wayland swap
-  timeout ([0010](0010-wayland-swaps-throttle-on-frame-callbacks.md)). They
+  timeout ([0010](0010-wayland-swaps-throttle-on-frame-callbacks.md)), and
+  the process-wide VA lock ([0017](0017-one-va-lock-per-process.md)). They
   cannot go upstream as they are.
 - The software device reports the render node once any display in the
   process got a d3d12 screen, not per display
