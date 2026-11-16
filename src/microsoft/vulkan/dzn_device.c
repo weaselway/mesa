@@ -3301,6 +3301,14 @@ dzn_device_memory_create(struct dzn_device *device,
       }
    }
 
+   /* A shared committed depth/stencil resource stays compressed in the
+    * COMMON layout on Intel, and the importer reads the raw compressed data.
+    * A placed resource on a shared heap does not have that problem, so give
+    * opaque exports of those images a heap like suballocated memory. */
+   if (image && export_flags == opaque_external_flag &&
+       vk_format_is_depth_or_stencil(image->vk.format))
+      image = NULL;
+
    const VkMemoryType *mem_type =
       &pdevice->memory.memoryTypes[pAllocateInfo->memoryTypeIndex];
 
@@ -3412,10 +3420,9 @@ dzn_device_memory_create(struct dzn_device *device,
 #endif
    } else if (imported) {
       error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
-      if (image || buffer) {
-         if (FAILED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res)))
-            goto cleanup;
-
+      /* A dedicated allocation may still come as a heap, see above. */
+      if ((image || buffer) &&
+          SUCCEEDED(ID3D12Device_OpenSharedHandle(device->dev, import_handle, &IID_ID3D12Resource, (void **)&mem->dedicated_res))) {
          /* Verify compatibility */
          D3D12_RESOURCE_DESC desc = dzn_ID3D12Resource_GetDesc(mem->dedicated_res);
          D3D12_HEAP_PROPERTIES opened_props = { 0 };
