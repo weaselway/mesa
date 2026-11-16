@@ -310,6 +310,8 @@ d3d12_create_fence_fd(struct pipe_context *pctx,
 
    if (type == PIPE_FD_TYPE_NATIVE_SYNC)
       fence = d3d12_import_fence_fd(screen, fd);
+   else if (type == PIPE_FD_TYPE_SYNCOBJ)
+      fence = d3d12_import_syncobj_fd(screen, fd);
 
    d3d12_fence_reference((struct d3d12_fence **)pfence, NULL);
    *pfence = (struct pipe_fence_handle *)fence;
@@ -323,6 +325,18 @@ d3d12_signal(struct pipe_context *pipe,
 {
    struct d3d12_screen *screen = d3d12_screen(pipe->screen);
    struct d3d12_fence *fence = d3d12_fence(pfence);
+   /* A failed import leaves no fence. */
+   if (!fence)
+      return;
+#ifndef _WIN32
+   if (fence->type == PIPE_FD_TYPE_SYNCOBJ) {
+      struct pipe_fence_handle *done = NULL;
+      d3d12_flush(pipe, &done, 0);
+      d3d12_fence_signal_syncobj(screen, fence, d3d12_fence(done));
+      d3d12_fence_reference((struct d3d12_fence **)&done, NULL);
+      return;
+   }
+#endif
    d3d12_flush_cmdlist(d3d12_context(pipe));
    d3d12_fence_signal_impl(fence, screen->cmdqueue, value);
 }
@@ -332,6 +346,8 @@ d3d12_wait(struct pipe_context *pipe, struct pipe_fence_handle *pfence, uint64_t
 {
    struct d3d12_screen *screen = d3d12_screen(pipe->screen);
    struct d3d12_fence *fence = d3d12_fence(pfence);
+   if (!fence)
+      return;
    d3d12_flush_cmdlist(d3d12_context(pipe));
    d3d12_fence_wait_impl(fence, screen->cmdqueue, value);
 }

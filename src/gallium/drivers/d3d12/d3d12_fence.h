@@ -99,6 +99,13 @@ struct d3d12_fence {
     * this one, only event_fd, and it can only be waited on by the CPU. */
    bool foreign_fd;
 
+#ifndef _WIN32
+   /* type == PIPE_FD_TYPE_SYNCOBJ: a semaphore imported from Vulkan, a
+    * binary DRM syncobj on the screen's dxgdrm node (drm_fd, not owned). */
+   uint32_t syncobj;
+   int drm_fd;
+#endif
+
    /* Exported d3d12_bo's (referenced) the context wrote since its previous
     * fence. Exporting this fence as a sync_file marks them explicit_sync. */
    struct util_dynarray exported_writes;
@@ -118,6 +125,15 @@ d3d12_create_fence_raw(ID3D12Fence *d3d12_fence_obj, uint64_t fence_value);
 
 struct d3d12_fence *
 d3d12_import_fence_fd(struct d3d12_screen *screen, int fd);
+
+#ifndef _WIN32
+struct d3d12_fence *
+d3d12_import_syncobj_fd(struct d3d12_screen *screen, int fd);
+
+void
+d3d12_fence_signal_syncobj(struct d3d12_screen *screen, struct d3d12_fence *fence,
+                           struct d3d12_fence *done);
+#endif
 
 struct d3d12_fence *
 d3d12_open_fence(struct d3d12_screen *screen, HANDLE handle, const void *name, pipe_fd_type type);
