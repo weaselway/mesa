@@ -43,6 +43,20 @@
 
 #include <va/va_drmcommon.h>
 
+/* One lock for all VADisplays of the process. Their contexts can share one
+ * device (D3D12 creates one per adapter), and drivers such as the WSL Intel
+ * D3D12 driver crash when a decoder and an encoder on it are used from two
+ * threads at once.
+ */
+mtx_t vl_va_mutex;
+static once_flag vl_va_mutex_once = ONCE_FLAG_INIT;
+
+static void
+vl_va_mutex_init(void)
+{
+   (void) mtx_init(&vl_va_mutex, mtx_plain);
+}
+
 static struct VADriverVTable vtable =
 {
    &vlVaTerminate,
@@ -212,7 +226,7 @@ VA_DRIVER_INIT_FUNC(VADriverContextP ctx)
    if (!drv->htab)
       goto error_htab;
 
-   (void) mtx_init(&drv->mutex, mtx_plain);
+   call_once(&vl_va_mutex_once, vl_va_mutex_init);
 
    ctx->pDriverData = (void *)drv;
    ctx->version_major = 0;
@@ -264,9 +278,9 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    config = handle_table_get(drv->htab, config_id);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    if (!config)
       return VA_STATUS_ERROR_INVALID_CONFIG;
@@ -400,17 +414,17 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
       break;
    }
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    *context_id = handle_table_add(drv->htab, context);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    if (create_decoder) {
-      mtx_lock(&drv->mutex);
+      mtx_lock(&vl_va_mutex);
       if (is_vpp)
          context->decoder = vl_create_proc(drv->pipe, &context->templat);
       else
          context->decoder = drv->pipe->create_video_codec(drv->pipe, &context->templat);
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       if (!context->decoder) {
          vlVaDestroyContext(ctx, *context_id);
          *context_id = VA_INVALID_ID;
@@ -435,10 +449,10 @@ vlVaDestroyContext(VADriverContextP ctx, VAContextID context_id)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    context = handle_table_get(drv->htab, context_id);
    if (!context) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    }
 
@@ -525,7 +539,7 @@ vlVaDestroyContext(VADriverContextP ctx, VAContextID context_id)
    util_dynarray_fini(&context->bs.sizes);
    FREE(context);
    handle_table_remove(drv->htab, context_id);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -539,13 +553,14 @@ vlVaTerminate(VADriverContextP ctx)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    drv = ctx->pDriverData;
+   mtx_lock(&vl_va_mutex);
    pipe_video_codec_reference(&drv->proc, NULL);
    if (drv->pipe2)
       drv->pipe2->destroy(drv->pipe2);
    drv->pipe->destroy(drv->pipe);
    drv->vscreen->destroy(drv->vscreen);
    handle_table_destroy(drv->htab);
-   mtx_destroy(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
    FREE(drv);
 
    return VA_STATUS_SUCCESS;

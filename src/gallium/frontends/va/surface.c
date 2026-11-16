@@ -97,17 +97,17 @@ vlVaDestroySurfaces(VADriverContextP ctx, VASurfaceID *surface_list, int num_sur
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
    drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    for (i = 0; i < num_surfaces; ++i) {
       vlVaSurface *surf = handle_table_get(drv->htab, surface_list[i]);
       if (!surf) {
-         mtx_unlock(&drv->mutex);
+         mtx_unlock(&vl_va_mutex);
          return VA_STATUS_ERROR_INVALID_SURFACE;
       }
       vlVaDestroySurface(drv, surf);
       handle_table_remove(drv->htab, surface_list[i]);
    }
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 }
@@ -127,10 +127,10 @@ _vlVaSyncSurface(VADriverContextP ctx, VASurfaceID render_target, uint64_t timeo
    if (!drv)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    surf = handle_table_get(drv->htab, render_target);
    if (!surf) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SURFACE;
    }
 
@@ -145,7 +145,7 @@ _vlVaSyncSurface(VADriverContextP ctx, VASurfaceID render_target, uint64_t timeo
    if (surf->pipe_fence) {
       struct pipe_screen *pscreen = drv->pipe->screen;
       if (!pscreen->fence_finish(pscreen, NULL, surf->pipe_fence, timeout_ns)) {
-         mtx_unlock(&drv->mutex);
+         mtx_unlock(&vl_va_mutex);
          return VA_STATUS_ERROR_TIMEDOUT;
       }
       pscreen->fence_reference(pscreen, &surf->pipe_fence, NULL);
@@ -153,12 +153,12 @@ _vlVaSyncSurface(VADriverContextP ctx, VASurfaceID render_target, uint64_t timeo
 
    /* No outstanding operation: nothing to do. */
    if (!fence) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_SUCCESS;
    }
 
    if (!codec) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    }
 
@@ -166,12 +166,12 @@ _vlVaSyncSurface(VADriverContextP ctx, VASurfaceID render_target, uint64_t timeo
    pipe_video_codec_reference(&tmp_codec, codec);
 
    /* Unlock mutex while waiting */
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    int ret = tmp_codec->fence_wait(tmp_codec, fence, timeout_ns);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    pipe_video_codec_reference(&tmp_codec, NULL);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
    return ret ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_TIMEDOUT;
 }
 
@@ -278,9 +278,9 @@ vlVaQuerySurfaceAttributes(VADriverContextP ctx, VAConfigID config_id,
    if (!drv)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    config = handle_table_get(drv->htab, config_id);
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    if (!config)
       return VA_STATUS_ERROR_INVALID_CONFIG;
@@ -1025,7 +1025,7 @@ vlVaCreateSurfaces2(VADriverContextP ctx, unsigned int format,
 
    memset(surfaces, VA_INVALID_ID, num_surfaces * sizeof(VASurfaceID));
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    for (i = 0; i < num_surfaces; i++) {
       surf = CALLOC(1, sizeof(vlVaSurface));
       if (!surf) {
@@ -1087,7 +1087,7 @@ vlVaCreateSurfaces2(VADriverContextP ctx, unsigned int format,
 
    if (memory_type != VA_SURFACE_ATTRIB_MEM_TYPE_VA)
       drv->has_external_handles = true;
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 
@@ -1099,7 +1099,7 @@ free_surf:
    FREE(surf);
 
 no_res:
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
    if (i)
       vlVaDestroySurfaces(ctx, surfaces, i);
 
@@ -1186,17 +1186,17 @@ vlVaExportSurfaceHandle(VADriverContextP ctx,
 
    drv    = VL_VA_DRIVER(ctx);
    screen = VL_VA_PSCREEN(ctx);
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
 
    surf = handle_table_get(drv->htab, surface_id);
    vlVaGetSurfaceBuffer(drv, surf);
    if (!surf || !surf->buffer) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SURFACE;
    }
 
    if (surf->buffer->interlaced) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SURFACE;
    }
 
@@ -1319,7 +1319,7 @@ vlVaExportSurfaceHandle(VADriverContextP ctx,
 #endif
 
    drv->has_external_handles = true;
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return VA_STATUS_SUCCESS;
 
@@ -1332,7 +1332,7 @@ fail:
       CloseHandle(whandle.handle);
 #endif
 
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return ret;
 }
