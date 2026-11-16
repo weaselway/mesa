@@ -32,6 +32,7 @@
 #include "d3d12_context.h"
 #include "d3d12_screen.h"
 
+#include "util/log.h"
 #include "util/u_atomic.h"
 #include "util/os_file.h"
 #include "util/u_memory.h"
@@ -43,6 +44,10 @@ destroy_fence(struct d3d12_fence *fence)
 {
    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
       d3d12_fence_close_event(fence->event, fence->event_fd);
+#ifndef _WIN32
+   else if (fence->type == PIPE_FD_TYPE_SYNCOBJ)
+      drmSyncobjDestroy(fence->drm_fd, fence->syncobj);
+#endif
    else
       fence->cmdqueue_fence->Release();
    util_dynarray_foreach(&fence->exported_writes, struct d3d12_bo *, bo)
@@ -128,6 +133,34 @@ d3d12_import_fence_fd(struct d3d12_screen *screen, int fd)
    pipe_reference_init(&ret->reference, 1);
    return ret;
 }
+
+#ifndef _WIN32
+/* An opaque fd from a Vulkan semaphore. dzn exports those as DRM syncobjs on
+ * the dxgdrm node, so keep the syncobj and move sync_files in and out of it.
+ */
+struct d3d12_fence *
+d3d12_import_syncobj_fd(struct d3d12_screen *screen, int fd)
+{
+   if (screen->dxgdrm_fd < 0)
+      return NULL;
+
+   struct d3d12_fence *ret = CALLOC_STRUCT(d3d12_fence);
+   if (!ret)
+      return NULL;
+
+   if (drmSyncobjFDToHandle(screen->dxgdrm_fd, fd, &ret->syncobj)) {
+      mesa_loge("d3d12: importing a semaphore fd failed: %s", strerror(errno));
+      FREE(ret);
+      return NULL;
+   }
+
+   ret->type = PIPE_FD_TYPE_SYNCOBJ;
+   ret->drm_fd = screen->dxgdrm_fd;
+   ret->event_fd = -1;
+   pipe_reference_init(&ret->reference, 1);
+   return ret;
+}
+#endif
 
 struct d3d12_fence *
 d3d12_create_fence_raw(ID3D12Fence *fence, uint64_t value)
@@ -262,6 +295,24 @@ d3d12_fence_wait_impl(struct d3d12_fence *fence, ID3D12CommandQueue *queue, uint
       return;
    }
 
+#ifndef _WIN32
+   if (fence->type == PIPE_FD_TYPE_SYNCOBJ) {
+      /* The signal is already submitted (binary semaphore), so the wait
+       * can't deadlock.
+       * shortcut: blocks the CPU like foreign_fd; use a bridge thread that
+       * signals an ID3D12Fence (see dzn_queue_wait_drm_syncobj) if the stall
+       * shows up in profiles. */
+      int sync_file = -1;
+      if (drmSyncobjExportSyncFile(fence->drm_fd, fence->syncobj, &sync_file)) {
+         mesa_loge("d3d12: semaphore wait without a pending signal: %s", strerror(errno));
+         return;
+      }
+      sync_wait(sync_file, -1);
+      close(sync_file);
+      return;
+   }
+#endif
+
    if (fence->type == PIPE_FD_TYPE_NATIVE_SYNC)
       value = fence->value;
    queue->Wait(fence->cmdqueue_fence, value);
@@ -301,6 +352,19 @@ fence_get_fd(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence)
    }
 
    return os_dupfd_cloexec(fence->event_fd);
+}
+
+/* Makes the syncobj signal once done, a fence that covers the work to signal
+ * after. */
+void
+d3d12_fence_signal_syncobj(struct d3d12_screen *screen, struct d3d12_fence *fence,
+                           struct d3d12_fence *done)
+{
+   int sync_file = done ? fence_get_fd(&screen->base, (struct pipe_fence_handle *)done) : -1;
+   if (sync_file < 0 || drmSyncobjImportSyncFile(fence->drm_fd, fence->syncobj, sync_file))
+      mesa_loge("d3d12: signalling a semaphore failed: %s", strerror(errno));
+   if (sync_file >= 0)
+      close(sync_file);
 }
 #endif
 
