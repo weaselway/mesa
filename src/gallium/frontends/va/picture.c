@@ -51,10 +51,10 @@ vlVaBeginPicture(VADriverContextP ctx, VAContextID context_id, VASurfaceID rende
    if (!drv)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    context = handle_table_get(drv->htab, context_id);
    if (!context) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    }
 
@@ -66,7 +66,7 @@ vlVaBeginPicture(VADriverContextP ctx, VAContextID context_id, VASurfaceID rende
    surf = handle_table_get(drv->htab, render_target);
    vlVaGetSurfaceBuffer(drv, surf);
    if (!surf || !surf->buffer) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SURFACE;
    }
 
@@ -106,7 +106,7 @@ vlVaBeginPicture(VADriverContextP ctx, VAContextID context_id, VASurfaceID rende
    context->have_slice_params = false;
    context->proc.dst_surface = NULL;
 
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
    return VA_STATUS_SUCCESS;
 }
 
@@ -137,22 +137,22 @@ vlVaRenderPicture(VADriverContextP ctx, VAContextID context_id, VABufferID *buff
    if (!drv)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    context = handle_table_get(drv->htab, context_id);
    if (!context) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    }
 
    if (!context->target_id) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_OPERATION_FAILED;
    }
 
    for (i = 0; i < num_buffers && vaStatus == VA_STATUS_SUCCESS; ++i) {
       vlVaBuffer *buf = handle_table_get(drv->htab, buffers[i]);
       if (!buf) {
-         mtx_unlock(&drv->mutex);
+         mtx_unlock(&vl_va_mutex);
          return VA_STATUS_ERROR_INVALID_BUFFER;
       }
 
@@ -194,7 +194,7 @@ vlVaRenderPicture(VADriverContextP ctx, VAContextID context_id, VABufferID *buff
       util_dynarray_clear(&context->bs.sizes);
    }
 
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
 
    return vaStatus;
 }
@@ -244,15 +244,15 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
    if (!drv)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
 
-   mtx_lock(&drv->mutex);
+   mtx_lock(&vl_va_mutex);
    context = handle_table_get(drv->htab, context_id);
    if (!context || !context->decoder) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_CONTEXT;
    }
 
    if (!context->target_id) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_OPERATION_FAILED;
    }
 
@@ -260,7 +260,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
    context->target_id = 0;
 
    if (context->needs_begin_frame) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_OPERATION_FAILED;
    }
 
@@ -270,7 +270,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
    surf = handle_table_get(drv->htab, output_id);
    vlVaGetSurfaceBuffer(drv, surf);
    if (!surf || !surf->buffer) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SURFACE;
    }
 
@@ -282,7 +282,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
       *out_target = surf->buffer;
 
    if ((bool)(surf->templat.bind & PIPE_BIND_PROTECTED) != context->desc.base.protected_playback) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SURFACE;
    }
 
@@ -315,7 +315,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
             VAStatus ret =
                vlVaPostProc(drv, NULL, context->target, context->proc.vpp.dst, &context->proc.vpp);
             if (ret != VA_STATUS_SUCCESS) {
-               mtx_unlock(&drv->mutex);
+               mtx_unlock(&vl_va_mutex);
                return ret;
             }
          }
@@ -341,7 +341,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
                                                      context->target->buffer_format,
                                                      context->decoder->profile,
                                                      context->decoder->entrypoint)) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_INVALID_SURFACE;
    }
 
@@ -350,7 +350,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
       context->desc.base.flush_flags = drv->has_external_handles ? 0 : PIPE_FLUSH_ASYNC;
 
    if (context->decoder->end_frame(context->decoder, context->target, &context->desc.base) != 0) {
-      mtx_unlock(&drv->mutex);
+      mtx_unlock(&vl_va_mutex);
       return VA_STATUS_ERROR_OPERATION_FAILED;
    }
 
@@ -368,7 +368,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
             VAStatus ret =
                vlVaPostProc(drv, NULL, context->target, context->proc.vpp.dst, &context->proc.vpp);
             if (ret != VA_STATUS_SUCCESS) {
-               mtx_unlock(&drv->mutex);
+               mtx_unlock(&vl_va_mutex);
                return ret;
             }
          }
@@ -393,7 +393,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
       }
    }
 
-   mtx_unlock(&drv->mutex);
+   mtx_unlock(&vl_va_mutex);
    return VA_STATUS_SUCCESS;
 }
 
