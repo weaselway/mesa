@@ -283,8 +283,9 @@ init_texture(struct d3d12_screen *screen,
    if (templ->bind & PIPE_BIND_RENDER_TARGET)
       desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-   // This is expected from D3D11 openers for D3D12 created shareable resources
-   if (templ->bind & PIPE_BIND_SHARED)
+   // This is expected from D3D11 openers for D3D12 created shareable resources.
+   // D3D12 rejects it for depth-stencil, e.g. GL depth textures in a memobj heap.
+   if ((templ->bind & PIPE_BIND_SHARED) && !(templ->bind & PIPE_BIND_DEPTH_STENCIL))
       desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
 
    if (templ->bind & PIPE_BIND_DEPTH_STENCIL) {
