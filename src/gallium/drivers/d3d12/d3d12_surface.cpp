@@ -246,6 +246,7 @@ d3d12_create_surface(struct d3d12_screen *screen,
    surface->base.level = tpl->level;
    surface->base.first_layer = tpl->first_layer;
    surface->base.last_layer = tpl->last_layer;
+   surface->texture_generation_id = p_atomic_read(&res->generation_id);
 
    DXGI_FORMAT dxgi_format = d3d12_get_resource_rt_format(tpl->format);
    if (is_depth_or_stencil)
