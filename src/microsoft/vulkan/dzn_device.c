@@ -169,6 +169,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
       .KHR_storage_buffer_storage_class      = true,
 #ifdef DZN_USE_WSI_PLATFORM
       .KHR_swapchain                         = true,
+      .KHR_swapchain_mutable_format          = true,
 #endif
       .KHR_synchronization2                  = true,
       .KHR_timeline_semaphore                = true,
