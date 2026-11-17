@@ -31,6 +31,7 @@
 #include "pipebuffer/pb_bufmgr.h"
 
 #include "util/format/u_format.h"
+#include "util/os_time.h"
 #include "util/set.h"
 #include "util/u_memory.h"
 
@@ -186,6 +187,138 @@ d3d12_bo_wrap_buffer(struct d3d12_screen *screen, struct pb_buffer *buf)
    return bo;
 }
 
+/* Creating a committed resource costs a round trip to the host on WSL, and
+ * GTK's GL renderer creates and frees a few dozen small offscreen textures
+ * per frame (one per icon shadow in Nautilus). So idle textures are kept for
+ * a while and handed out again for an identical description, the way other
+ * drivers keep a bo cache. Their contents are undefined like those of a new
+ * texture. */
+#define TEXTURE_CACHE_MAX_SIZE (32ull << 20)
+#define TEXTURE_CACHE_MAX_AGE_NS 1000000000ll
+
+struct d3d12_texture_cache_entry {
+   struct list_head link;
+   ID3D12Resource *res;
+   D3D12_RESOURCE_DESC desc;
+   enum pipe_format format;
+   struct d3d12_resource_state state;
+   enum d3d12_residency_status residency;
+   uint64_t size;
+   int64_t time;
+};
+
+static void
+texture_cache_release_locked(struct d3d12_screen *screen, struct d3d12_texture_cache_entry *entry)
+{
+   list_del(&entry->link);
+   screen->texture_cache_size -= entry->size;
+   d3d12_resource_state_cleanup(&entry->state);
+   entry->res->Release();
+   FREE(entry);
+}
+
+static void
+texture_cache_prune_locked(struct d3d12_screen *screen, int64_t now)
+{
+   list_for_each_entry_safe(struct d3d12_texture_cache_entry, entry, &screen->texture_cache, link) {
+      if (screen->texture_cache_size <= TEXTURE_CACHE_MAX_SIZE &&
+          now - entry->time < TEXTURE_CACHE_MAX_AGE_NS)
+         break;
+      texture_cache_release_locked(screen, entry);
+   }
+}
+
+/* Takes over the resource and its state from a dying bo. The bo's last
+ * reference is gone, so no batch uses the resource any more. */
+static bool
+texture_cache_put(struct d3d12_bo *bo)
+{
+   struct d3d12_screen *screen = bo->screen;
+
+   if (bo->cache_format == PIPE_FORMAT_NONE || bo->exported || bo->scanout || bo->imported ||
+       bo->estimated_size > TEXTURE_CACHE_MAX_SIZE / 4)
+      return false;
+
+   struct d3d12_texture_cache_entry *entry = CALLOC_STRUCT(d3d12_texture_cache_entry);
+   if (!entry)
+      return false;
+
+   entry->res = bo->res;
+   entry->desc = GetDesc(bo->res);
+   entry->format = bo->cache_format;
+   entry->state = bo->global_state;
+   memset(&bo->global_state, 0, sizeof(bo->global_state));
+   entry->residency = bo->residency_status;
+   entry->size = bo->estimated_size;
+   entry->time = os_time_get_nano();
+
+   mtx_lock(&screen->texture_cache_lock);
+   list_addtail(&entry->link, &screen->texture_cache);
+   screen->texture_cache_size += entry->size;
+   texture_cache_prune_locked(screen, entry->time);
+   mtx_unlock(&screen->texture_cache_lock);
+   return true;
+}
+
+static bool
+texture_desc_equal(const D3D12_RESOURCE_DESC *a, const D3D12_RESOURCE_DESC *b)
+{
+   /* Alignment is left out: GetDesc() may report the one actually used. */
+   return a->Dimension == b->Dimension && a->Width == b->Width && a->Height == b->Height &&
+          a->DepthOrArraySize == b->DepthOrArraySize && a->MipLevels == b->MipLevels &&
+          a->Format == b->Format && a->SampleDesc.Count == b->SampleDesc.Count &&
+          a->SampleDesc.Quality == b->SampleDesc.Quality && a->Layout == b->Layout &&
+          a->Flags == b->Flags;
+}
+
+struct d3d12_bo *
+d3d12_texture_cache_get(struct d3d12_screen *screen, const D3D12_RESOURCE_DESC *desc,
+                        enum pipe_format format)
+{
+   struct d3d12_texture_cache_entry *found = NULL;
+
+   mtx_lock(&screen->texture_cache_lock);
+   texture_cache_prune_locked(screen, os_time_get_nano());
+   list_for_each_entry_rev(struct d3d12_texture_cache_entry, entry, &screen->texture_cache, link) {
+      if (entry->format == format && texture_desc_equal(&entry->desc, desc)) {
+         found = entry;
+         list_del(&entry->link);
+         screen->texture_cache_size -= entry->size;
+         break;
+      }
+   }
+   mtx_unlock(&screen->texture_cache_lock);
+
+   if (!found)
+      return NULL;
+
+   struct d3d12_bo *bo = d3d12_bo_wrap_res(screen, found->res, found->residency);
+   if (!bo) {
+      d3d12_resource_state_cleanup(&found->state);
+      found->res->Release();
+      FREE(found);
+      return NULL;
+   }
+
+   /* The state the resource was left in, not the COMMON of a new one. */
+   d3d12_resource_state_cleanup(&bo->global_state);
+   bo->global_state = found->state;
+   bo->cache_format = format;
+   FREE(found);
+   return bo;
+}
+
+bool
+d3d12_texture_cache_clear(struct d3d12_screen *screen)
+{
+   mtx_lock(&screen->texture_cache_lock);
+   bool had_entries = !list_is_empty(&screen->texture_cache);
+   list_for_each_entry_safe(struct d3d12_texture_cache_entry, entry, &screen->texture_cache, link)
+      texture_cache_release_locked(screen, entry);
+   mtx_unlock(&screen->texture_cache_lock);
+   return had_entries;
+}
+
 void
 d3d12_bo_unreference(struct d3d12_bo *bo)
 {
@@ -217,9 +350,11 @@ d3d12_bo_unreference(struct d3d12_bo *bo)
 
       mtx_unlock(&bo->screen->submit_mutex);
 
-      d3d12_resource_state_cleanup(&bo->global_state);
-      if (bo->res)
-         bo->res->Release();
+      if (!bo->res || !texture_cache_put(bo)) {
+         d3d12_resource_state_cleanup(&bo->global_state);
+         if (bo->res)
+            bo->res->Release();
+      }
 
       uint64_t mask = bo->local_context_state_mask;
       while (mask) {
