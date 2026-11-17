@@ -372,6 +372,18 @@ init_texture(struct d3d12_screen *screen,
    if (templ->bind & row_major_binds)
       desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
+   /* Only private textures; anything that may be shared, scanned out or
+    * used by video keeps getting its own resource. */
+   const unsigned uncached_binds = PIPE_BIND_SHARED | PIPE_BIND_SCANOUT | PIPE_BIND_LINEAR |
+                                   PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_CUSTOM |
+                                   PIPE_BIND_VIDEO_DECODE_DPB | PIPE_BIND_VIDEO_ENCODE_DPB;
+   bool cacheable = !heap && !(templ->bind & uncached_binds);
+   if (cacheable) {
+      res->bo = d3d12_texture_cache_get(screen, &desc, templ->format);
+      if (res->bo)
+         return true;
+   }
+
    HRESULT hres = E_FAIL;
    enum d3d12_residency_status init_residency;
    do {
@@ -462,7 +474,8 @@ init_texture(struct d3d12_screen *screen,
                                                      IID_PPV_ARGS(&d3d12_res));
       }
    }
-   } while (hres == E_OUTOFMEMORY && d3d12_screen_reclaim_one(screen));
+   } while (hres == E_OUTOFMEMORY &&
+            (d3d12_texture_cache_clear(screen) || d3d12_screen_reclaim_one(screen)));
 
    if (FAILED(hres))
       return false;
@@ -490,6 +503,8 @@ init_texture(struct d3d12_screen *screen,
    }
 
    res->bo = d3d12_bo_wrap_res(screen, d3d12_res, init_residency);
+   if (res->bo && cacheable)
+      res->bo->cache_format = templ->format;
 
    return true;
 }
@@ -983,6 +998,9 @@ d3d12_resource_get_handle(struct pipe_screen *pscreen,
    switch (handle->type) {
    case WINSYS_HANDLE_TYPE_D3D12_RES:
       handle->com_obj = d3d12_resource_resource(res);
+      /* The caller may hold on to it, so it must not be reused. */
+      if (res->bo)
+         res->bo->cache_format = PIPE_FORMAT_NONE;
       return true;
    case WINSYS_HANDLE_TYPE_FD: {
       HANDLE d3d_handle = nullptr;
