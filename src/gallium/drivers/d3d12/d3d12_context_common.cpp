@@ -63,6 +63,7 @@
 #include "util/u_dl.h"
 #include <dxguids/dxguids.h>
 #include <string.h>
+#include <utility>
 #include "d3d12_interop_public.h"
 
 #ifndef _GAMING_XBOX
@@ -283,12 +284,71 @@ d3d12_flush(struct pipe_context *pipe,
    }
 }
 
+#ifdef HAVE_GALLIUM_D3D12_GRAPHICS
+/* D3D12 shares only resources created in a shared heap, and GL textures are
+ * not, so eglExportDMABUFImageMESA() on one failed (GtkGLArea does that every
+ * frame). The frontend calls flush_resource() before a texture is shared, so
+ * the texture moves to a new shared resource here, like
+ * si_reallocate_texture_inplace() does on radeonsi. */
+static void
+d3d12_make_texture_shareable(struct d3d12_context *ctx, struct d3d12_resource *res)
+{
+   struct pipe_resource *pres = &res->base.b;
+
+   const unsigned skip_binds = PIPE_BIND_SHARED | PIPE_BIND_CUSTOM | PIPE_BIND_VIDEO_DECODE_DPB |
+                               PIPE_BIND_VIDEO_ENCODE_DPB;
+   /* Planes of one texture share the bo, moving one of them would split it. */
+   if (pres->target == PIPE_BUFFER || (pres->bind & skip_binds) || pres->nr_samples > 1 ||
+       !res->bo || res->bo->imported || res->dt || res->sub_rect_src ||
+       res->first_plane != pres || pres->next)
+      return;
+
+   struct pipe_resource templ = *pres;
+   templ.bind |= PIPE_BIND_SHARED;
+   templ.next = NULL;
+   struct pipe_resource *shared = pres->screen->resource_create(pres->screen, &templ);
+   if (!shared)
+      return;
+
+   for (unsigned level = 0; level <= pres->last_level; level++) {
+      struct pipe_box box;
+      u_box_3d(0, 0, 0, u_minify(pres->width0, level), u_minify(pres->height0, level),
+               util_num_layers(pres, level), &box);
+      ctx->base.resource_copy_region(&ctx->base, shared, level, 0, 0, 0, pres, level, &box);
+   }
+
+   /* The old bo stays alive for as long as the batches that use it. */
+   std::swap(res->bo, d3d12_resource(shared)->bo);
+   pres->bind |= PIPE_BIND_SHARED;
+   p_atomic_inc(&res->generation_id);
+   pipe_resource_reference(&shared, NULL);
+
+   /* Sampler views catch up by themselves through generation_id, a bound
+    * framebuffer needs to be set again.
+    * shortcut: only this context's framebuffer is refreshed, others pick
+    * up the new resource on their next framebuffer change. */
+   bool bound = ctx->fb.zsbuf.texture == pres;
+   for (unsigned i = 0; i < ctx->fb.nr_cbufs; i++)
+      bound |= ctx->fb.cbufs[i].texture == pres;
+   if (bound) {
+      struct pipe_framebuffer_state fb = {};
+      util_copy_framebuffer_state(&fb, &ctx->fb);
+      ctx->base.set_framebuffer_state(&ctx->base, &fb);
+      util_unreference_framebuffer_state(&fb);
+   }
+}
+#endif // HAVE_GALLIUM_D3D12_GRAPHICS
+
 static void
 d3d12_flush_resource(struct pipe_context *pctx,
                      struct pipe_resource *pres)
 {
    struct d3d12_context *ctx = d3d12_context(pctx);
    struct d3d12_resource *res = d3d12_resource(pres);
+
+#ifdef HAVE_GALLIUM_D3D12_GRAPHICS
+   d3d12_make_texture_shareable(ctx, res);
+#endif
 
    d3d12_transition_resource_state(ctx, res,
                                    D3D12_RESOURCE_STATE_COMMON,

@@ -1422,6 +1422,15 @@ d3d12_set_constant_buffer(struct pipe_context *pctx,
    ctx->shader_dirty[shader] |= D3D12_SHADER_DIRTY_CONSTBUF;
 }
 
+/* False as well when the texture got a new resource since the surface was
+ * made, see d3d12_make_texture_shareable(). */
+static bool
+surface_matches(const struct pipe_surface *tpl, const struct d3d12_surface *surf)
+{
+   return surf && pipe_surface_equal(tpl, &surf->base) &&
+          surf->texture_generation_id == p_atomic_read(&d3d12_resource(tpl->texture)->generation_id);
+}
+
 static void
 d3d12_framebuffer_init(struct d3d12_context *ctx, const struct pipe_framebuffer_state *fb)
 {
@@ -1429,7 +1438,7 @@ d3d12_framebuffer_init(struct d3d12_context *ctx, const struct pipe_framebuffer_
 
    if (fb) {
       for (unsigned i = 0; i < fb->nr_cbufs; i++) {
-         if (ctx->fb_cbufs[i] && pipe_surface_equal(&fb->cbufs[i], &ctx->fb_cbufs[i]->base))
+         if (surface_matches(&fb->cbufs[i], ctx->fb_cbufs[i]))
             continue;
 
          struct d3d12_surface *surf = fb->cbufs[i].texture ?
@@ -1445,7 +1454,7 @@ d3d12_framebuffer_init(struct d3d12_context *ctx, const struct pipe_framebuffer_
             d3d12_surface_reference(&ctx->fb_cbufs[i], NULL);
       }
 
-      if (ctx->fb_zsbuf && pipe_surface_equal(&fb->zsbuf, &ctx->fb_zsbuf->base))
+      if (surface_matches(&fb->zsbuf, ctx->fb_zsbuf))
          return;
       struct d3d12_surface *zsurf = fb->zsbuf.texture ?
          d3d12_create_surface(screen, &fb->zsbuf) :
