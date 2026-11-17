@@ -90,6 +90,11 @@ struct d3d12_screen {
    mtx_t pending_free_lock;
    struct list_head pending_free_list;
 
+   /* Idle textures kept for reuse, oldest first. See d3d12_texture_cache_get(). */
+   mtx_t texture_cache_lock;
+   struct list_head texture_cache;
+   uint64_t texture_cache_size;
+
    struct list_head residency_list;
    ID3D12Fence *residency_fence;
    uint64_t residency_fence_value;
