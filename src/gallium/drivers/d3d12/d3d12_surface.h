@@ -35,6 +35,9 @@ struct d3d12_surface {
 
    struct d3d12_descriptor_handle uint_rtv_handle;
    struct d3d12_descriptor_handle desc_handle;
+
+   /* generation_id of the texture the views were created for */
+   unsigned texture_generation_id;
 };
 
 enum d3d12_surface_conversion_mode {
