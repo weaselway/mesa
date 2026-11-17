@@ -1896,6 +1896,14 @@ dzn_graphics_pipeline_translate_blend(struct dzn_graphics_pipeline *pipeline,
             translate_blend_factor(in_blend->pAttachments[i].dstAlphaBlendFactor, true, support_alpha_blend_factor);
          desc->RenderTarget[i].BlendOpAlpha =
             translate_blend_op(in_blend->pAttachments[i].alphaBlendOp);
+
+         /* MIN/MAX ignore the factors, and D3D12 rejects SRC1 factors there. */
+         if (desc->RenderTarget[i].BlendOp == D3D12_BLEND_OP_MIN ||
+             desc->RenderTarget[i].BlendOp == D3D12_BLEND_OP_MAX)
+            desc->RenderTarget[i].SrcBlend = desc->RenderTarget[i].DestBlend = D3D12_BLEND_ONE;
+         if (desc->RenderTarget[i].BlendOpAlpha == D3D12_BLEND_OP_MIN ||
+             desc->RenderTarget[i].BlendOpAlpha == D3D12_BLEND_OP_MAX)
+            desc->RenderTarget[i].SrcBlendAlpha = desc->RenderTarget[i].DestBlendAlpha = D3D12_BLEND_ONE;
       }
    }
 }
