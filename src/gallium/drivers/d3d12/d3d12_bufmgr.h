@@ -82,6 +82,10 @@ struct d3d12_bo {
     * for d3d12_flush_cmdlist(); written from any thread. */
    bool explicit_sync;
 
+   /* Format the texture was created for, if the resource may go to the
+    * texture cache when the bo dies; PIPE_FORMAT_NONE otherwise. */
+   enum pipe_format cache_format;
+
 #ifndef NDEBUG
    bool is_front_buffer;
 #endif
@@ -191,6 +195,13 @@ d3d12_screen_reclaim_completed(struct d3d12_screen *screen);
 
 bool
 d3d12_screen_reclaim_one(struct d3d12_screen *screen);
+
+struct d3d12_bo *
+d3d12_texture_cache_get(struct d3d12_screen *screen, const D3D12_RESOURCE_DESC *desc,
+                        enum pipe_format format);
+
+bool
+d3d12_texture_cache_clear(struct d3d12_screen *screen);
 
 struct pb_manager *
 d3d12_bufmgr_create(struct d3d12_screen *screen);
