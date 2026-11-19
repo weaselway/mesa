@@ -1056,7 +1056,14 @@ d3d12_destroy_sampler_view(struct pipe_context *pctx,
                            struct pipe_sampler_view *pview)
 {
    struct d3d12_sampler_view *view = d3d12_sampler_view(pview);
+   struct d3d12_screen *screen = d3d12_screen(pctx->screen);
+
+   /* The view pool belongs to the screen, and views are created and
+    * destroyed from several threads (the threaded context does both on
+    * the application thread). */
+   mtx_lock(&screen->descriptor_pool_mutex);
    d3d12_descriptor_handle_free(&view->handle);
+   mtx_unlock(&screen->descriptor_pool_mutex);
    pipe_resource_reference(&view->base.texture, NULL);
    FREE(view);
 }
