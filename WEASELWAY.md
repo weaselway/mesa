@@ -50,8 +50,8 @@ The list lives in [weaselway-build.sh](weaselway-build.sh).
 - On an aarch64 host this builds for arm64. The d3d12 code is
   architecture-independent, so the compile check still holds.
 - The weaselway image builds a `mesa-X.Y.Z-wsl` release branch, not `main`:
-  `mesa-26.2.7-wsl` for nixpkgs' Mesa up to 26.2, `mesa-26.3.0-wsl` for 26.3.
+  `mesa-26.2.7-wsl` for nixpkgs' Mesa up to 26.2, `mesa-26.3.1-wsl` for 26.3.
   `main` is the same commits on upstream main, ready for the next release
   branch. A fix goes to all three: commit it on `mesa-26.2.7-wsl`, then
-  cherry-pick it to `mesa-26.3.0-wsl` and `main`.
+  cherry-pick it to `mesa-26.3.1-wsl` and `main`.
 - The decisions behind the changes are recorded in [wsl-adr](wsl-adr/README.md).
