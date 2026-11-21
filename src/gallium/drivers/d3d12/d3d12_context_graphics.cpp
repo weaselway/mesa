@@ -664,7 +664,15 @@ d3d12_create_sampler_state(struct pipe_context *pctx,
    memcpy(desc.BorderColor, state->border_color.f, sizeof(float) * 4);
 
    // TODO Normalized Coordinates?
+   /* The threaded context creates samplers on the application thread, while
+    * d3d12_reset_batch frees deleted ones on the driver thread. */
+   mtx_lock(&ctx->sampler_pool_mutex);
    d3d12_descriptor_pool_alloc_handle(ctx->sampler_pool, &ss->handle);
+   if (state->compare_mode == PIPE_TEX_COMPARE_R_TO_TEXTURE)
+      d3d12_descriptor_pool_alloc_handle(ctx->sampler_pool,
+                                         &ss->handle_without_shadow);
+   mtx_unlock(&ctx->sampler_pool_mutex);
+
    screen->dev->CreateSampler(&desc, ss->handle.cpu_handle);
 
    if (state->compare_mode == PIPE_TEX_COMPARE_R_TO_TEXTURE) {
@@ -673,8 +681,6 @@ d3d12_create_sampler_state(struct pipe_context *pctx,
        * must not be a comparison sampler. */
       desc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
 
-      d3d12_descriptor_pool_alloc_handle(ctx->sampler_pool,
-                                         &ss->handle_without_shadow);
       screen->dev->CreateSampler(&desc,
                                  ss->handle_without_shadow.cpu_handle);
       ss->is_shadow_sampler = true;

@@ -207,8 +207,10 @@ d3d12_reset_batch(struct d3d12_context *ctx, struct d3d12_batch *batch, uint64_t
       _mesa_set_clear(batch->sampler_views, delete_sampler_view);
 
       _mesa_set_clear(batch->queries, delete_query);
+      mtx_lock(&ctx->sampler_pool_mutex);
       util_dynarray_foreach(&batch->zombie_samplers, d3d12_descriptor_handle, handle)
          d3d12_descriptor_handle_free(handle);
+      mtx_unlock(&ctx->sampler_pool_mutex);
       util_dynarray_clear(&batch->zombie_samplers);
       d3d12_descriptor_heap_clear(batch->view_heap);
       d3d12_descriptor_heap_clear(batch->sampler_heap);

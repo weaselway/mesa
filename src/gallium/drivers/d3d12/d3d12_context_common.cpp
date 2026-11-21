@@ -166,6 +166,7 @@ d3d12_context_destroy(struct pipe_context *pctx)
    slab_destroy_child(&ctx->transfer_pool);
    slab_destroy_child(&ctx->transfer_pool_unsync);
    d3d12_context_state_table_destroy(ctx);
+   mtx_destroy(&ctx->sampler_pool_mutex);
 
    FREE(ctx);
 }
@@ -769,6 +770,7 @@ d3d12_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    ctx->max_video_encoding_async_depth = static_cast<uint32_t>(debug_get_num_option("D3D12_VIDEO_ENC_ASYNC_DEPTH", 8));
    ctx->base.screen = pscreen;
    ctx->base.priv = priv;
+   mtx_init(&ctx->sampler_pool_mutex, mtx_plain);
 
    ctx->base.destroy = d3d12_context_destroy;
    ctx->base.flush = d3d12_flush;
