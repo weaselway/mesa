@@ -285,6 +285,7 @@ struct d3d12_context {
    struct list_head active_queries;
 
    struct d3d12_descriptor_pool *sampler_pool;
+   mtx_t sampler_pool_mutex; /* app thread allocates, driver thread frees */
    struct d3d12_descriptor_handle null_sampler;
 
    PFN_D3D12_SERIALIZE_VERSIONED_ROOT_SIGNATURE D3D12SerializeVersionedRootSignature;
